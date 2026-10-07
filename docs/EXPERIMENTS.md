@@ -1,6 +1,6 @@
 # Experiments
 
-> **Status (2026-10-07).** E000: script + offline test ready, not run live (no API key). E001: task, checks, runner ready and tested offline, not run live. E010: **run** (offline), results in `experiments/010-replay-semantics/`. All others: planned.
+> **Status (2026-10-07).** E000: script + offline test ready, not run live (no API key). E001: task, checks, runner ready and tested offline, not run live. E010: **run** (offline), results in `experiments/010-replay-semantics/`. All others: planned. **Free-first revision (2026-10-07, PROPOSED):** live runs will use a local model, never a paid API; E000/E001 live arms move to the local backend once built; E020-E024 are defined in section 5.
 
 The lab exists to run experiments. This document defines the method, the metrics, the task bank, and the catalogue.
 
@@ -93,3 +93,64 @@ Status: all *planned*. Hypotheses are filled in by me before each experiment run
 3. E006, E016, E019 (cheap, single-agent, teach observability and permissions).
 4. S-01, then E003/E004/E009 (first real multi-agent questions).
 5. The rest as questions arise. New experiments are added from each experiment's "New Questions".
+
+
+---
+
+## 5. Local-model experiments (PROPOSED, 2026-10-07)
+
+Free-first revision (`FREE-FIRST.md`, `LOCAL-LLM.md`, `MODEL-GATEWAY.md`). None of these can run before implementation steps 1-9 and the owner's manual install of `llama-server` + Qwen3-1.7B. Cost: $0; time and RAM only. The hypotheses below are Claude's, written before any local model exists on the machine; the owner may add their own before running.
+
+Shared setup unless stated: `llama-server` CPU x64 build pinned by number, `--jinja -c 4096 -np 1 --host 127.0.0.1`; Qwen3-1.7B Q4_K_M pinned by SHA-256; temperature 0, seed 1, thinking off; other apps closed; laptop on mains power. Every run records build, model hash, server `/props`, and free RAM at start.
+
+Conclusion format for all five: a table of measurements, then labelled paragraphs **Observed** (numbers and transcripts), **Inferred** (what they suggest), **Not yet verified** (what would change the conclusion), then **New questions**.
+
+### E020 — Local model baseline
+
+- **Question.** Can this laptop serve Qwen3-1.7B fast enough and within memory for an agent loop?
+- **Hypothesis.** Loads and serves. Peak working set of `llama-server` 1.6-2.2 GB at 4k context. Generation 8-15 tok/s (below the ~23 tok/s single-channel bandwidth bound). First-turn prompt processing (~1-2k tokens) takes tens of seconds; later turns are much faster because the prefix is cached (`timings.cache_n` close to the previous prompt length). The Vulkan build speeds prompt processing more than generation. Qwen3-4B Q4_K_M works only with nearly everything closed, at under half the 1.7B generation speed.
+- **Setup.** Arms: (a) 1.7B Q4_K_M CPU, (b) 1.7B Q4_K_M Vulkan, (c) 1.7B official Q8_0 CPU, (d) 4B Q4_K_M CPU (stretch; skipped if free RAM < 3.5 GB). Fixed prompt set: a short chat, a ~1.5k-token tool-schema-heavy prompt, a 3-turn conversation that grows by appending.
+- **Procedure.** Start the server per arm; `agent-lab local check`; send each prompt 5 times through the gateway (no tools executed); record `timings` and process memory (`Get-Process llama-server`).
+- **Measurements.** Load time; peak working set; prompt tokens/s; generated tokens/s; `cache_n` on appended turns; free system RAM; paging stalls.
+- **Expected observations.** As hypothesised; appended-turn prompt time drops sharply with cache hits.
+- **Failure conditions.** Server fails to start or is killed (out of memory); a single short turn takes > 120 s; Windows becomes unusable while serving. If arm (a) fails: fall back to Qwen3-0.6B for plumbing only, and record that "useful local agent" is not met on this hardware.
+
+### E021 — Local tool calling
+
+- **Question.** Does Qwen3-1.7B, served by `llama-server --jinja`, produce structured tool calls the kernel can execute, and how does the chat template present tools to the model?
+- **Hypothesis.** `/apply-template` shows the tools rendered as a Hermes-style block in the system turn; replies come back as `tool_calls` with string `arguments` and ids. On single-step requests ("read notes/meeting.md") at least 90% of calls name the right tool with schema-valid arguments.
+- **Setup.** `demo-permissions` workspace; three tools; 20 single-step prompts (5 per tool + 5 that need no tool).
+- **Procedure.** Record `/props` (does the server report tool-call support for this template?) and one `/apply-template` output. Run the 20 prompts x 3 repetitions through the full kernel (policy on, approvals auto-deny).
+- **Measurements.** Right tool chosen; arguments parse; arguments schema-valid; unwanted calls on no-tool prompts; ids present; latency per call.
+- **Expected observations.** High validity on single steps; occasional extra or missing calls on no-tool prompts.
+- **Failure conditions.** < 70% valid calls, or calls appear as text in `content` instead of `tool_calls` → native strategy not viable for this model; switch the default to `constrained_json` and record why.
+
+### E022 — Local model failure modes
+
+- **Question.** How does a small local agent fail on multi-step tasks, and does the kernel contain every failure?
+- **Hypothesis.** On `e001-meeting-actions` (needs ~4-6 calls) success is at most 40% over 10 runs. Dominant failures, in order: stopping early with a confident wrong answer; repeating the same call; malformed or invented arguments (wrong paths); attempted writes outside `out/` (denied); hitting `max_turns`. No failure escapes the workspace or bypasses policy.
+- **Setup.** E001 task on the local backend, native strategy; `max_turns` 12, `max_wall_seconds` 900.
+- **Procedure.** 10 runs. Read every transcript; label each failure with a fixed code list (early stop, repetition, invalid args, wrong tool, permission denied, invented file, limit hit, other) and map to the MAST categories where they fit.
+- **Measurements.** Success rate; failure codes per run; turns and wall time; denials; repeated identical calls; claim vs reality (final text vs checks).
+- **Expected observations.** Failures concentrated in multi-turn bookkeeping rather than single calls (consistent with the reported low multi-turn BFCL score of small models).
+- **Failure conditions (of the experiment).** Too slow to finish 10 runs in a session → reduce to 5 and say so. Kernel crash or any effect outside the workspace → stop and fix as a kernel bug.
+
+### E023 — Local vs scripted agent
+
+- **Question.** What differs between a scripted run and a real local run of the same task through the same kernel, and how reproducible is the local model?
+- **Hypothesis.** Event types follow the same grammar in both; content differs. With temperature 0 and a fixed seed, 5 repeated local runs give identical tool-call sequences in most but not all runs (possible CPU threading/batching nondeterminism). Replay of every local run matches exactly (replay never calls the model).
+- **Setup.** `demo-permissions` with its script vs the local model; same kernel commit.
+- **Procedure.** 5 local runs; compare tool-call sequences across runs; `agent-lab replay` each; diff the event-type sequence against the scripted run.
+- **Measurements.** Identical-sequence rate across local reruns; first divergence point; replay MATCH rate; time per run.
+- **Expected observations.** Replay 5/5 MATCH; reruns mostly identical.
+- **Failure conditions.** A local run's replay diverges → a determinism bug in the kernel or adapter (e.g. unstable key order in the wire body); fix before more local experiments.
+
+### E024 — Structured tool-call reliability
+
+- **Question.** Which strategy gives a small local model the most reliable executable tool calls: native template tool calling or grammar-constrained JSON actions?
+- **Hypothesis.** Constrained JSON gives ~100% parseable, schema-valid calls (the grammar forbids anything else) but picks the right tool and arguments less often than native calling on multi-step tasks, because it is not the format the model was trained on. Native calling has a small rate of malformed arguments, caught by the kernel as `invalid_input`.
+- **Setup.** Strategies `native` and `constrained_json` (EXPERIMENTAL); optionally a naive free-text arm. Task sets: the 20 single-step prompts from E021 and the E001 task.
+- **Procedure.** Each strategy x each prompt x 3 repetitions; E001 x 5 runs per strategy.
+- **Measurements.** Parse failures; schema violations; wrong-tool rate; argument correctness (path exists, sensible content); E001 success; tokens and seconds per turn (grammar overhead).
+- **Expected observations.** Constrained: zero parse failures, slightly lower task success. Native: rare parse failures, higher task success.
+- **Failure conditions.** Grammar generation unsupported or crashing for the schema used (e.g. `oneOf` across tools) → simplify to one generic action schema and record the limitation.

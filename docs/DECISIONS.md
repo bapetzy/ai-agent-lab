@@ -16,6 +16,7 @@ The owner approved Phase 0 on 2026-10-07. Entries D-001 to D-017 below were writ
 | D-013 | **Superseded by D-018** |
 | ARCHITECTURE §5 stack table (Pydantic, rich) | Amended by D-021 |
 | OBSERVABILITY envelope and replay | Refined by D-023 and D-024 |
+| D-003, D-007, D-025 | Proposed amendments D-026 to D-031 (free-first revision, awaiting approval) |
 
 ---
 
@@ -169,3 +170,35 @@ The owner approved Phase 0 on 2026-10-07. Entries D-001 to D-017 below were writ
 - **Status:** Accepted, implemented.
 - **Decision:** Before each model call the budget refuses if `spent + max_tokens_per_response x output price > max_cost_usd`, or if turns/tokens are exhausted. Cost is estimated from the usage the API reports and list prices in `budget.py`. A model without a known price cannot run live. Limits come from the task file (defaults: 10 turns, 30 tool calls, $0.50).
 - **Consequences:** Not a bill; input tokens of the *next* call are not predicted. Good enough to make runaway runs hard.
+
+---
+
+## Free-first revision (2026-10-07) — PROPOSED, awaiting owner approval
+
+### D-026 Free-first: no paid API is ever required
+- **Status:** Proposed. **Changes the live path of Phase 1 (D-003).**
+- **Context:** The owner will not spend money on API credits. Phase 1's only live path was the Anthropic API.
+- **Decision:** Tests use the scripted backend (no network, key, or model). The default real model is local. External APIs are optional adapters, disabled unless the extra is installed, an explicit flag is set, the task names the backend, and a key exists. Experiments are costed in time and RAM.
+- **Consequences:** E000/E001 live arms move to the local backend; Anthropic-only features (effort, preserved thinking) become adapter options.
+
+### D-027 Backend-neutral model interface
+- **Status:** Proposed. **Amends D-003 (the loop no longer speaks the Messages API) and D-007 (the prefix check moves to neutral messages).**
+- **Decision:** `ModelRequest` / `ModelResponse` / `ToolCall` / `ToolResult` as specified in `MODEL-GATEWAY.md` §2. The kernel and loop never import a provider SDK. Provider state that must round-trip (Anthropic thinking signatures) travels in an opaque `provider_payload`. Core runtime dependencies become stdlib-only; `anthropic` moves to an optional extra.
+
+### D-028 Primary local runtime: llama.cpp `llama-server`, native Windows, pinned build
+- **Status:** Proposed.
+- **Decision:** One OpenAI-compatible adapter (`OpenAICompatBackend`) talking to `llama-server` on `127.0.0.1`. CPU build first; Vulkan as an E020 arm. Ollama is the documented fallback (same adapter through its OpenAI-compatible endpoint). Not WSL, Docker, Transformers or LM Studio (`LOCAL-LLM.md` §2-3).
+- **Revisit when:** E020 shows the setup or performance is unworkable.
+
+### D-029 Default local model: Qwen3-1.7B, GGUF Q4_K_M, thinking off
+- **Status:** Proposed.
+- **Decision:** ~1.1 GB file pinned by SHA-256; 4k context; one server slot. Qwen3-4B Q4_K_M is the stretch arm; Qwen3-0.6B for plumbing smoke tests only.
+- **Revisit when:** E020 (memory headroom) and E022 (task success) are in.
+
+### D-030 Local tool calling: native template tool calls first, grammar-constrained JSON action as fallback
+- **Status:** Proposed.
+- **Decision:** Strategy A (`tools` + `--jinja`, server-parsed `tool_calls`) is the default. Strategy B (`response_format` JSON schema compiled to a grammar, one action per turn) is EXPERIMENTAL and compared in E024. Free-text parsing is rejected. Malformed arguments are journaled and answered with `invalid_input`; nothing unvalidated executes.
+
+### D-031 Runaway guards for $0 backends; journal schema version 2
+- **Status:** Proposed. **Amends D-025.**
+- **Decision:** The spend cap applies only to priced backends. Every backend gets `max_wall_seconds` per run and `request_timeout_s` per model call, plus the existing turn, tool-call and token limits. `run_started.schema_version = 2`; Phase 1 (version 1) runs are not replayable after the refactor.

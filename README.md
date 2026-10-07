@@ -11,6 +11,7 @@ This project is the "AI that can use my computer" rabbit hole (Stages 7–8) of 
 - **Phase 0** (research and architecture): approved 2026-10-07.
 - **Phase 1** (walking skeleton: one agent, fully observed): implemented 2026-10-07, awaiting review. No multi-agent, no code execution, no UI.
 - Live API runs have **not** happened yet: no API key on this machine. Everything below works offline with a scripted (fake) model.
+- **Free-first revision (PROPOSED, 2026-10-07):** the lab must run with zero paid API usage. Default real model becomes a local model (llama.cpp `llama-server` + Qwen3-1.7B); the Anthropic adapter becomes optional and off by default. See [docs/FREE-FIRST.md](docs/FREE-FIRST.md), [docs/LOCAL-LLM.md](docs/LOCAL-LLM.md), [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md). The live commands below that need `ANTHROPIC_API_KEY` will be replaced.
 
 Docs mark each part as **IMPLEMENTED**, **PROPOSED** (designed, not built) or **NOT YET VERIFIED**.
 
@@ -89,6 +90,9 @@ The recommended architecture is an **agent kernel**: a small Python program that
 | [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) | Event model, journal, causality, replay and fork, inspecting behaviour without chain-of-thought |
 | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Experiment method, metrics, the task bank, the experiment catalogue |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Architecture decision log |
+| [docs/FREE-FIRST.md](docs/FREE-FIRST.md) | Zero-paid-API rule; audit of Anthropic coupling in Phase 1 (PROPOSED revision) |
+| [docs/LOCAL-LLM.md](docs/LOCAL-LLM.md) | Machine constraints, local runtime and model decision (PROPOSED) |
+| [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md) | Backend-neutral model interface, tool-calling strategy, implementation plan (PROPOSED) |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | Phases, Phase 1 status checklist; what not to build yet |
 | [experiments/](experiments/) | E000 bare loop, E001 single-agent baseline, E010 replay semantics |
 

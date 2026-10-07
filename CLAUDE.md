@@ -11,6 +11,8 @@ Personal research lab (BAPE-LAB, AI agent rabbit hole). Parent lab and its rules
 
 ## Rules
 
+- **Free-first (owner rule, 2026-10-07):** never require or ask for paid API credits. Tests use the scripted model; real-model runs use a local model; external APIs are optional and off by default. See docs/FREE-FIRST.md.
+
 - Never invent APIs, SDK behaviour, or security guarantees. Claude API details: use the `claude-api` skill or official docs. Label claims Observed / Inferred / Not yet verified.
 - Complexity needs a written reason (a decision entry or an experiment that needs it).
 - Explain the underlying concept when introducing a mechanism; do not hide it behind an abstraction.
