@@ -6,7 +6,7 @@ Personal research lab (BAPE-LAB, AI agent rabbit hole). Parent lab and its rules
 
 - Phase 0 approved; Phase 1 (one agent, fully observed) implemented 2026-10-07 and awaiting owner review. Do NOT start Phase 2 (delegation, sandbox, UI) without explicit approval.
 - Decisions live in `docs/DECISIONS.md`. Change a decision there (new superseding entry) before changing the code that depends on it.
-- Free-first core refactor (MODEL-GATEWAY steps 1-6) implemented 2026-10-07. Step 7 (local llama.cpp adapter) needs owner approval; do not install runtimes or download models without it.
+- Free-first core refactor (MODEL-GATEWAY steps 1-7) implemented 2026-10-07, incl. the local `openai_compat` backend (stub-tested only). Next steps need owner approval; do not install runtimes, download models or run E020 without it.
 - Commands: `uv run pytest` (offline, no SDK/key/network/model), `uv run agent-lab --help`. Optional paid adapter only: `uv sync --extra anthropic` + `AGENTLAB_ENABLE_EXTERNAL_API=1`.
 - Docs label parts IMPLEMENTED / PROPOSED / NOT YET VERIFIED. Keep that true when code changes.
 

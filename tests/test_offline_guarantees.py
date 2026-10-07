@@ -15,6 +15,7 @@ from agentlab.run import start_run
 CORE_MODULES = [
     "agentlab.model_types",
     "agentlab.backends.scripted",
+    "agentlab.backends.openai_compat",
     "agentlab.gateway",
     "agentlab.kernel",
     "agentlab.agent",

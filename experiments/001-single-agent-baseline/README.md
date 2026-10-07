@@ -1,6 +1,6 @@
 # E001 — Single-agent baseline
 
-**Status:** structure ready, task and runner tested offline. **Not yet run.** Free-first (D-026): the task now targets the local backend (`openai_compat`, Qwen3-1.7B via `llama-server`), which is not implemented yet; `run_e001.py` explains that and exits. The setup table below still shows the original Phase 1 (Anthropic) configuration; it will be rewritten when the local backend exists.
+**Status:** structure ready, task and runner tested offline. **Not yet run.** Free-first (D-026): the task now targets the local backend (`openai_compat`, Qwen3-1.7B via `llama-server`). The backend exists (stub-tested); no server or model is installed, so a run fails with a clear 'cannot reach the local model server' message. The setup table below still shows the original Phase 1 (Anthropic) configuration; it will be rewritten when the local backend exists.
 
 This is the control condition for later experiments (specialists, pipelines, memory, restricted permissions). Do not optimise it. Its value is being simple and stable.
 

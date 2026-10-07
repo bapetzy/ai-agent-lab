@@ -1,7 +1,10 @@
 # E001 baseline task: one generalist agent, read/write file tools, least-privilege policy.
-# Free-first: the real model for this task is LOCAL (llama.cpp llama-server, Qwen3-1.7B),
-# backend "openai_compat", which is NOT IMPLEMENTED YET (docs/MODEL-GATEWAY.md step 7).
-# Until then the task can only be exercised offline with a scripted model (see tests).
+# Free-first: the real model for this task is LOCAL: llama.cpp llama-server serving Qwen3-1.7B,
+# backend "openai_compat" (implemented; not yet run against a real server). It needs a
+# llama-server you start yourself (docs/LOCAL-LLM.md section 6), started with
+#   --alias qwen3-1.7b-q4_k_m
+# so the server reports the same model name as [model].name below; otherwise the run fails
+# with model_mismatch (fallback is disabled). Without a server the run fails clearly.
 #
 # Success is decided by the checks below, not by what the agent claims.
 
@@ -16,8 +19,10 @@ Then reply with one sentence stating how many open action items you found.
 """
 
 [model]
-backend = "openai_compat"          # local llama-server (planned); no paid API
-name = "qwen3-1.7b-q4_k_m"         # planned default local model (D-029), not installed
+backend = "openai_compat"          # local llama-server; no paid API
+base_url = "http://127.0.0.1:8080" # loopback only (anything else is refused)
+name = "qwen3-1.7b-q4_k_m"         # default local model (D-029); not installed yet
+tool_strategy = "native"           # server-parsed tool calls (D-030)
 temperature = 0.0
 seed = 1
 options = { enable_thinking = false }

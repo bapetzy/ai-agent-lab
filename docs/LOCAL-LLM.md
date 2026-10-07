@@ -1,6 +1,6 @@
 # Local LLM: runtime and model decision
 
-Status: **PROPOSED** (2026-10-07). No runtime or model has been installed or downloaded. Every performance number below is NOT VERIFIED until E020 runs.
+Status (2026-10-07): runtime and model choices **approved** as candidates (D-028, D-029). The adapter that talks to `llama-server` is **IMPLEMENTED** (`backends/openai_compat.py`, tested against a stub). No runtime or model has been installed or downloaded. Every performance number below is NOT VERIFIED until E020 runs.
 
 ## 1. The machine (Observed, 2026-10-07)
 
@@ -99,7 +99,8 @@ To be finalised in implementation step 9 (`MODEL-GATEWAY.md` §8):
 1. Download `llama-<build>-bin-win-cpu-x64.zip` from the llama.cpp GitHub release page; record the build number; unzip to `D:\agentlab\runtimes\llama.cpp\<build>\`.
 2. Download `Qwen3-1.7B-Q4_K_M.gguf` (~1.1 GB) to `D:\agentlab\models\`; record its SHA-256 (`Get-FileHash`).
 3. Close memory-heavy apps. Start the server in its own terminal so its log is visible:
-   `llama-server -m D:\agentlab\models\Qwen3-1.7B-Q4_K_M.gguf --jinja -c 4096 -np 1 --host 127.0.0.1 --port 8080`
+   `llama-server -m D:\agentlab\models\Qwen3-1.7B-Q4_K_M.gguf --jinja -c 4096 -np 1 --host 127.0.0.1 --port 8080 --alias qwen3-1.7b-q4_k_m`
+   (`--alias`: the name the server should report, which must equal the task's `[model].name`, because the kernel refuses responses from a model other than the one requested. NOT VERIFIED that llama-server reports the alias in its responses.)
    (`-np 1`: one slot, so the context is not split or multiplied; `--host 127.0.0.1`: never reachable from the network.)
 4. `uv run agent-lab local check` (PROPOSED) calls `/health`, `/props`, `/apply-template` and prints what the kernel will talk to.
 

@@ -1,13 +1,24 @@
 # Model gateway: one interface, many backends
 
-Status (2026-10-07): **steps 1-6 IMPLEMENTED** (provider-neutral core; owner-approved). Steps 7-10 (local llama.cpp adapter, `local check`, install, E020+) **PROPOSED, not started**. Before the refactor the gateway called the Anthropic SDK directly (`FREE-FIRST.md` §3 describes that state).
+Status (2026-10-07): **steps 1-7 IMPLEMENTED** (provider-neutral core + OpenAI-compatible local backend; owner-approved). Step 7 is tested only against an in-process stub server: **NOT VERIFIED against a real llama-server** (nothing installed). Steps 8-10 (rest of the Anthropic extra work, `local check`, install, E020+) **PROPOSED, not started**. Before the refactor the gateway called the Anthropic SDK directly (`FREE-FIRST.md` §3 describes that state).
 
 Implemented as specified, with these differences:
 
 - `ModelResponse` also has `request_id` (provider request id, journaled).
 - The ScriptedBackend lives in `src/agentlab/backends/scripted.py`; the old Anthropic-shaped `src/agentlab/scripted.py` is gone.
 - Part of step 8 was needed to meet the approved goal "core must not depend on the Anthropic SDK": `anthropic` is now an optional extra (`[project.optional-dependencies] anthropic`), the adapter lives in `backends/anthropic.py` with a lazy SDK import, and `make_backend` refuses it unless `AGENTLAB_ENABLE_EXTERNAL_API=1`, the extra and a key are present. Its mapping is unit-tested without the SDK; it has not been exercised against the real API since the refactor (no key; never required).
-- `tool_strategy`, `base_url` and `model_sha256` from §7 are not read yet (they belong to step 7). Task files use `[model] backend / name / temperature / seed / options`.
+- Step 7 (`backends/openai_compat.py`) follows §4.1, with these decisions (D-033):
+  - **Loopback only, no override.** `localhost`, `127.0.0.0/8`, `::1`; anything else (LAN IPs, `0.0.0.0`, hostnames, URLs with credentials, non-http schemes) is refused when the backend is built. The `allow_remote` escape hatch in §7 is **not** implemented: the owner asked for local-only.
+  - **Proxies ignored.** The HTTP opener has an empty proxy table, so environment or registry proxy settings cannot route "local" traffic elsewhere (tested with a bogus `HTTP_PROXY`).
+  - **Errors.** Connection refused/unreachable → `unavailable` (fails at once, message says how to start `llama-server`). HTTP 408/409/429/5xx (503 = server still loading the model) → `transient` (retried). Other 4xx and non-JSON replies → `permanent`. A request that exceeds `request_timeout_s` → `permanent`, **not retried** (on a CPU model a retry would just wait again).
+  - **Finish reasons.** `stop` with tool calls present is normalised to `tool_calls` (some servers do this); `length` stays `length` even with tool calls, so cut-off calls are never executed; `content_filter` → `refusal`; anything else → `other`.
+  - **Tool calls.** Arguments as a JSON string are parsed with `ToolCall.from_raw`; an object is accepted too. A missing call id gets a deterministic `call_<n>_<i>`. Assistant turns are sent back with each call's `raw_arguments` verbatim (malformed ones included). Error results are prefixed `ERROR: ` because the format has no error flag.
+  - **Options.** Only `enable_thinking` (→ `chat_template_kwargs`) is supported; any other option is refused instead of silently dropped.
+  - **Usage.** With llama-server `timings`: `input_tokens = prompt_n`, `cached_input_tokens = cache_n`; otherwise `usage.prompt_tokens` (and `prompt_tokens_details.cached_tokens` if present). `timings` is kept whole on the response. These field meanings come from the llama.cpp server README; NOT VERIFIED on a real server.
+  - **describe()** does a best-effort `GET /props` (5 s timeout) and records `model_path`, `build_info`, `total_slots`, `n_ctx` and a SHA-256 of the chat template, or `props_error`.
+  - **Model check.** The gateway compares the response's `model` field with `[model].name`. Start llama-server with `--alias <[model].name>` (LOCAL-LLM §6). Whether llama-server echoes the alias there is NOT VERIFIED; if it does not, the run fails with `model_mismatch` rather than continuing.
+  - `tool_strategy = "constrained_json"` is refused with a clear message (E024 arm, not built). `model_sha256` is not read yet (belongs to step 9, `local check`).
+- Task files use `[model] backend / name / temperature / seed / options`, plus `base_url` and `tool_strategy` for `openai_compat`.
 
 ## 1. Goal
 
@@ -211,7 +222,7 @@ Anthropic stays possible but closed by default. A run with `backend = "anthropic
 
 Dependencies after the change: **core = Python stdlib only** (HTTP via `urllib.request`); `anthropic` moves to an optional extra; dev = `pytest`, `ruff`.
 
-## 8. Implementation plan (steps 1-6 DONE 2026-10-07; 7-10 PROPOSED)
+## 8. Implementation plan (steps 1-7 DONE 2026-10-07; 8-10 PROPOSED)
 
 | # | Step | Tests (offline) |
 |---|---|---|

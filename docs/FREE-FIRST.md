@@ -9,7 +9,7 @@ The lab must be fully useful with **zero spending on model APIs**. Concretely:
 | Path | What it is | Needs | Status |
 |---|---|---|---|
 | **Tests** | Scripted (fake) model | Nothing: no internet, no key, no local model | IMPLEMENTED, provider-neutral (`backends/scripted.py`); tests prove no SDK, key or network is needed |
-| **Real AI, default** | Local model through a local runtime | The runtime (free, open source) and a model file (free to download) | PROPOSED |
+| **Real AI, default** | Local model through a local runtime | The runtime (free, open source) and a model file (free to download) | Adapter IMPLEMENTED (`backends/openai_compat.py`, loopback only); NOT VERIFIED with a real server; runtime and model not installed |
 | **Real AI, optional** | External API adapter (Anthropic, maybe others) | An API key the owner chooses to pay for | IMPLEMENTED as an optional adapter (`backends/anthropic.py`), off by default: needs the `anthropic` extra, `AGENTLAB_ENABLE_EXTERNAL_API=1` and a key. Not exercised live since the refactor. |
 
 Never required: Anthropic credits, OpenAI credits, paid SaaS, subscriptions, cloud agent services.

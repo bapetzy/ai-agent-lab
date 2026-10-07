@@ -11,7 +11,7 @@ This project is the "AI that can use my computer" rabbit hole (Stages 7–8) of 
 - **Phase 0** (research and architecture): approved 2026-10-07.
 - **Phase 1** (walking skeleton: one agent, fully observed): implemented 2026-10-07, awaiting review. No multi-agent, no code execution, no UI.
 - No real model has run yet. Everything below works offline with the scripted (fake) model.
-- **Free-first:** the lab runs with zero paid API usage. The provider-neutral core is IMPLEMENTED (2026-10-07): the kernel speaks only its own types; the scripted backend needs no SDK, key, network or model. The local model backend (llama.cpp `llama-server` + Qwen3-1.7B) is PROPOSED and not built yet. The Anthropic adapter is optional and off by default. See [docs/FREE-FIRST.md](docs/FREE-FIRST.md), [docs/LOCAL-LLM.md](docs/LOCAL-LLM.md), [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md).
+- **Free-first:** the lab runs with zero paid API usage. The provider-neutral core is IMPLEMENTED (2026-10-07): the kernel speaks only its own types; the scripted backend needs no SDK, key, network or model. The local model backend (`openai_compat`, for llama.cpp `llama-server` + Qwen3-1.7B) is IMPLEMENTED and tested against a stub server, but NOT VERIFIED with a real server: nothing is installed yet. The Anthropic adapter is optional and off by default. See [docs/FREE-FIRST.md](docs/FREE-FIRST.md), [docs/LOCAL-LLM.md](docs/LOCAL-LLM.md), [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md).
 
 Docs mark each part as **IMPLEMENTED**, **PROPOSED** (designed, not built) or **NOT YET VERIFIED**.
 
@@ -19,7 +19,7 @@ Docs mark each part as **IMPLEMENTED**, **PROPOSED** (designed, not built) or **
 
 ```powershell
 uv sync                                   # install (Python 3.14 via uv)
-uv run pytest                             # 122 tests, offline: no SDK, no key, no network, no model
+uv run pytest                             # 163 tests, offline: no SDK, no key, no internet, no model
 
 # Offline demo of every kernel path (allow, deny, ask a human, tool failure, malformed call):
 uv run agent-lab run tasks/demo-permissions --scripted tasks/demo-permissions/scripted.json
@@ -29,8 +29,8 @@ uv run agent-lab trace <id> --json        # the run's metrics
 uv run agent-lab show <id> 2              # one event in full, incl. the exact request sent
 uv run agent-lab replay <id>              # re-execute the kernel against the recording
 
-# Real model: local llama.cpp backend not built yet (MODEL-GATEWAY step 7). Until then:
-uv run agent-lab run tasks/e001-meeting-actions   # explains that the local backend is missing
+# Real model (local, free): start llama-server yourself first (docs/LOCAL-LLM.md section 6), then
+uv run agent-lab run tasks/e001-meeting-actions   # without a server: fails clearly, says how to start it
 uv run agent-lab rerun <id> --scripted FILE       # a NEW run with the recorded task and files
 ```
 
@@ -64,7 +64,7 @@ check_result (deterministic checks decide success) -> run_completed | run_failed
 | `src/agentlab/tools.py` | The three tools: list, read, write |
 | `src/agentlab/model_types.py` | The kernel's own vocabulary: ModelRequest/Response, ToolCall/Result |
 | `src/agentlab/gateway.py` | Where requests leave for a backend; prefix check, retries, model check |
-| `src/agentlab/backends/` | Scripted (default, offline) and the optional Anthropic adapter; the only provider-aware code |
+| `src/agentlab/backends/` | Scripted (default, offline), local OpenAI-compatible (`llama-server`, loopback only), optional Anthropic; the only provider-aware code |
 | `src/agentlab/journal.py` | Append-only SQLite events and blobs |
 | `src/agentlab/budget.py` | Limits and the cost estimate |
 | `src/agentlab/replay.py` | What replay does and does not reproduce |

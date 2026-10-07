@@ -4,7 +4,8 @@ way of producing model output. Only modules in this package may know a provider'
 - scripted.py   pre-written responses; default for tests and offline demos (IMPLEMENTED)
 - anthropic.py  optional external API adapter; off unless explicitly enabled (IMPLEMENTED;
                 needs the optional `anthropic` extra, a flag and a key)
-- openai_compat (local llama.cpp `llama-server`): PROPOSED, docs/MODEL-GATEWAY.md step 7
+- openai_compat.py  local OpenAI-compatible server (llama.cpp `llama-server`), loopback only,
+                stdlib HTTP (IMPLEMENTED against a stub; NOT VERIFIED against a real server)
 """
 
 from __future__ import annotations
@@ -32,10 +33,21 @@ def make_backend(task, *, scripted: str | Path | None = None):
             "this task uses the scripted backend: pass --scripted FILE with the responses"
         )
     if kind == "openai_compat":
-        raise BackendNotAvailable(
-            "backend 'openai_compat' (local llama.cpp server) is not implemented yet "
-            "(docs/MODEL-GATEWAY.md step 7). Run offline with --scripted FILE."
-        )
+        from agentlab.backends.openai_compat import DEFAULT_BASE_URL, OpenAICompatBackend
+
+        strategy = task.model.get("tool_strategy", "native")
+        if strategy != "native":
+            raise BackendNotAvailable(
+                f"tool_strategy {strategy!r} is not implemented; only 'native' exists "
+                "(constrained_json is the EXPERIMENTAL E024 arm, D-030)"
+            )
+        try:
+            return OpenAICompatBackend(
+                base_url=task.model.get("base_url", DEFAULT_BASE_URL),
+                timeout=task.limits.request_timeout_s,
+            )
+        except ValueError as e:
+            raise BackendNotAvailable(str(e)) from e
     if kind == "anthropic":
         if os.environ.get(ENABLE_FLAG) != "1":
             raise BackendNotAvailable(

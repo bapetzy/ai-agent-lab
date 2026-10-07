@@ -2,9 +2,10 @@
 
     uv run python experiments/001-single-agent-baseline/run_e001.py --repeat 5
 
-Free-first: the task's backend is the LOCAL model (openai_compat / llama-server), which is
-not implemented yet (docs/MODEL-GATEWAY.md step 7). Until then this runner explains that and
-exits. It never falls back to a paid API.
+Free-first: the task's backend is the LOCAL model (openai_compat -> llama-server on
+127.0.0.1). Start the server yourself first (docs/LOCAL-LLM.md section 6); without it each run
+fails with a clear 'cannot reach the local model server' message. It never falls back to a
+paid API.
 """
 
 from __future__ import annotations

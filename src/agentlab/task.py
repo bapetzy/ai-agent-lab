@@ -60,6 +60,9 @@ class Task:
             "temperature": m.get("temperature"),
             "seed": m.get("seed"),
         }
+        for optional in ("base_url", "tool_strategy"):  # openai_compat settings, kept if given
+            if optional in m:
+                model[optional] = m[optional]
         agent = dict(data["agent"])
         for key in ("system", "tools"):
             if key not in agent:

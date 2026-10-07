@@ -63,16 +63,21 @@ def test_scripted_task_without_a_script_explains_itself(tmp_path, capsys):
     assert "--scripted" in out
 
 
-def test_local_backend_is_not_implemented_yet_and_says_so(tmp_path, capsys):
-    code, out = run_cli(
-        capsys,
-        "run",
-        str(ROOT / "tasks" / "e001-meeting-actions"),
-        "--db",
-        str(tmp_path / "lab.db"),
+def test_unsupported_tool_strategy_is_refused(tmp_path, capsys):
+    import shutil
+
+    task_dir = tmp_path / "task"
+    shutil.copytree(ROOT / "tasks" / "e001-meeting-actions", task_dir)
+    toml = task_dir / "task.toml"
+    toml.write_text(
+        toml.read_text(encoding="utf-8").replace(
+            'tool_strategy = "native"', 'tool_strategy = "constrained_json"'
+        ),
+        encoding="utf-8",
     )
+    code, out = run_cli(capsys, "run", str(task_dir), "--db", str(tmp_path / "lab.db"))
     assert code == 2
-    assert "openai_compat" in out and "not implemented" in out
+    assert "constrained_json" in out and "not implemented" in out
 
 
 def test_anthropic_backend_is_off_unless_explicitly_enabled(tmp_path, capsys, monkeypatch):

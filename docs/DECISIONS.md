@@ -20,6 +20,7 @@ The owner approved Phase 0 on 2026-10-07. Entries D-001 to D-017 below were writ
 | D-028, D-029, D-030 | Accepted 2026-10-07 as the local runtime/model/tool-calling *candidates*; not implemented (step 7+) |
 | D-003, D-007, D-025 | Amended by D-026, D-027, D-031 |
 | D-032 | Accepted; records the compatibility breaks of the refactor |
+| D-033 | Accepted; implemented (step 7, local OpenAI-compatible backend) |
 
 ---
 
@@ -216,3 +217,9 @@ The owner approved Phase 0 on 2026-10-07. Entries D-001 to D-017 below were writ
   - Scripts for the scripted backend are provider-neutral JSON; Anthropic-shaped scripts no longer load.
   - The `anthropic` package is no longer installed by `uv sync`; `uv sync --extra anthropic` adds it.
   - Free backends report `cost_usd: null`; the spend cap applies only to priced backends; new limits `max_wall_seconds` (default 900) and `request_timeout_s` (default 300).
+
+### D-033 Local OpenAI-compatible backend: loopback only, no proxies, no silent option drops
+- **Status:** Accepted, implemented 2026-10-07 (MODEL-GATEWAY step 7). Tested against an in-process stub; NOT VERIFIED against a real llama-server.
+- **Context:** The default real model runs on this machine (D-026, D-028). The owner asked that only local addresses be allowed.
+- **Decision:** `backends/openai_compat.py`, stdlib `urllib`. Base URL must be loopback (`localhost`, `127.0.0.0/8`, `::1`), checked when the backend is built; **no `allow_remote` override** (supersedes that line of MODEL-GATEWAY §7). Proxy settings are ignored. Unreachable server → `unavailable` (no retry, clear start instructions); 408/409/429/5xx → `transient`; other errors and timeouts → `permanent`. `stop` + tool calls → `tool_calls`; `length` never executes calls. Unknown `options` are refused. Only `tool_strategy = "native"`. Details in MODEL-GATEWAY.md status notes.
+- **Consequences:** Pointing a task at another machine's model server is impossible without a new decision. The response `model` field must match `[model].name` (use `--alias`).
