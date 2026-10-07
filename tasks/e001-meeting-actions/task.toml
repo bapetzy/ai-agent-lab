@@ -1,0 +1,82 @@
+# E001 baseline task: one generalist agent, read/write file tools, least-privilege policy.
+# Live (costs money, needs ANTHROPIC_API_KEY):
+#   uv run agent-lab run tasks/e001-meeting-actions
+#
+# Success is decided by the checks below, not by what the agent claims.
+
+[task]
+name = "e001-meeting-actions"
+prompt = """
+The folder notes/ contains notes from several team meetings.
+Find every action item that is still OPEN (not marked done, and not cancelled) across all meetings.
+Write them to out/action-items.md, one per line, in the form:
+- [Owner] action item
+Then reply with one sentence stating how many open action items you found.
+"""
+
+[agent]
+model = "claude-opus-5-5"
+effort = "medium"
+system = """You are an assistant working inside a task workspace.
+You can only act through the provided tools; they operate inside the workspace only.
+Some writes may be denied by a permission policy. If that happens, work within your permissions.
+When you have finished, reply with a short final answer."""
+tools = ["list_files", "read_file", "write_file"]
+
+[limits]
+max_turns = 12
+max_tool_calls = 30
+max_input_tokens = 200000
+max_output_tokens = 40000
+max_cost_usd = 0.50
+max_tokens_per_response = 8000
+
+[[policy]]
+id = "read-all"
+capability = "filesystem.read"
+decision = "allow"
+
+[[policy]]
+id = "write-out"
+capability = "filesystem.write"
+paths = ["out/**"]
+decision = "allow"
+
+# Expected open items: Ana/venue, Citra/budget, Dewi/slides, Ben/backup (reopened).
+[[check]]
+type = "file_exists"
+path = "out/action-items.md"
+
+[[check]]
+type = "file_contains"
+path = "out/action-items.md"
+text = "Ana"
+
+[[check]]
+type = "file_contains"
+path = "out/action-items.md"
+text = "Citra"
+
+[[check]]
+type = "file_contains"
+path = "out/action-items.md"
+text = "Dewi"
+
+[[check]]
+type = "file_contains"
+path = "out/action-items.md"
+text = "backup"
+
+[[check]]
+type = "file_not_contains"
+path = "out/action-items.md"
+text = "agenda"
+
+[[check]]
+type = "file_not_contains"
+path = "out/action-items.md"
+text = "catering"
+
+[[check]]
+type = "final_text_contains"
+text = "4"

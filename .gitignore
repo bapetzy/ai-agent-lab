@@ -1,0 +1,35 @@
+# Secrets: never commit
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+secrets/
+
+# Run data: journals, workspaces (contain model inputs/outputs; regenerate any time)
+runs/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python / tooling caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.pytest_tmp/
+.ruff_cache/
+dist/
+build/
+*.egg-info/
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code local settings
+.claude/settings.local.json

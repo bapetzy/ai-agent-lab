@@ -1,0 +1,37 @@
+[project]
+name = "agentlab"
+version = "0.1.0"
+description = "BAPE-LAB AI Agent Laboratory: a small, fully observed agent kernel for learning how agents work"
+authors = [
+    { email = "bryan2306paulo@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = [
+    "anthropic>=1.11,<2",
+]
+
+[project.scripts]
+agent-lab = "agentlab.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.21,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "live: calls the real Anthropic API (costs money; needs ANTHROPIC_API_KEY). Deselected by default.",
+]
+addopts = "-m 'not live'"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
