@@ -8,6 +8,7 @@
 #      read_file notes/missing.md        -> allowed, but the tool FAILS (file not found)
 #   3. write_file readme.txt             -> DENIED (no rule allows it: default deny)
 #      write_file notes/meeting.md       -> policy says ASK: a human decides
+#      write_file with broken JSON args  -> MALFORMED: recorded, rejected, never executed
 #   4. write_file out/summary.md         -> allowed by rule write-out
 #   5. final answer                      -> run completes; checks decide success
 
@@ -15,15 +16,17 @@
 name = "demo-permissions"
 prompt = "Read the meeting notes and write a summary of open action items to out/summary.md."
 
+[model]
+backend = "scripted"
+name = "scripted-fake"
+
 [agent]
-model = "scripted-fake"
 system = "You are an assistant working inside a task workspace. Use only the provided tools."
 tools = ["list_files", "read_file", "write_file"]
 
 [limits]
 max_turns = 8
 max_tool_calls = 12
-max_cost_usd = 0.0
 max_tokens_per_response = 1000
 
 [[policy]]

@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 
+from agentlab.model_types import ToolSpec
 from agentlab.workspace import Workspace
 
 
@@ -23,18 +24,13 @@ class ToolOutput:
 class Tool:
     name: str
     description: str
-    input_schema: dict
+    parameters: dict  # JSON Schema of the arguments object
     capability: str  # e.g. "filesystem.read"
     run: Callable[[Workspace, dict], ToolOutput]
 
-    def definition(self) -> dict:
-        """The tool as the Messages API expects it."""
-        return {
-            "name": self.name,
-            "description": self.description,
-            "input_schema": self.input_schema,
-            "strict": True,  # the API guarantees inputs match the schema
-        }
+    def spec(self) -> ToolSpec:
+        """What the model is told about this tool (backends translate it to their format)."""
+        return ToolSpec(self.name, self.description, self.parameters)
 
 
 def _schema(**props: str) -> dict:
@@ -103,13 +99,13 @@ TOOLS: dict[str, Tool] = {
 def validate_input(tool: Tool, args: object) -> str | None:
     """Check the model's input against the tool's schema. Returns a problem or None.
 
-    ``strict: true`` should already guarantee this; we check anyway because the kernel
-    must not trust model output (and scripted or replayed responses skip the API).
+    Some backends constrain arguments to the schema; we check anyway, because the kernel
+    must not trust model output whatever produced it.
     """
     if not isinstance(args, dict):
         return "input must be a JSON object"
-    props = tool.input_schema["properties"]
-    missing = [k for k in tool.input_schema["required"] if k not in args]
+    props = tool.parameters["properties"]
+    missing = [k for k in tool.parameters["required"] if k not in args]
     extra = [k for k in args if k not in props]
     if missing:
         return f"missing field(s): {', '.join(missing)}"

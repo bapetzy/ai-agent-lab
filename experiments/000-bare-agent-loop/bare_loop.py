@@ -2,15 +2,17 @@
 
     uv run python experiments/000-bare-agent-loop/bare_loop.py
 
-Needs ANTHROPIC_API_KEY. Costs a few cents at most (max 4 model calls, effort low).
+OPTIONAL and Anthropic-specific (free-first, D-026): running it live needs the `anthropic`
+extra (uv sync --extra anthropic) and a paid ANTHROPIC_API_KEY. It is never required. Its loop
+logic is tested offline without either (tests/test_e000_bare_loop.py). A local-model variant
+is planned after the llama.cpp adapter exists.
+
 Prints the exact JSON that goes to the model and comes back, at every step.
 """
 
 import json
 import os
 import sys
-
-import anthropic
 
 MODEL = "claude-opus-5-5"
 NOTES = {  # the "world" the tool can see
@@ -75,6 +77,8 @@ def bare_loop(client, prompt: str, max_turns: int = 4) -> str:
 if __name__ == "__main__":
     if not os.environ.get("ANTHROPIC_API_KEY"):
         sys.exit("Set ANTHROPIC_API_KEY first (E000 calls the real API).")
+    import anthropic  # optional extra, imported only when actually running live
+
     client = anthropic.Anthropic(max_retries=0)
     final = bare_loop(client, "What is on my todo note? Answer in one sentence.")
     print(f"\n===== FINAL ANSWER =====\n{final}")

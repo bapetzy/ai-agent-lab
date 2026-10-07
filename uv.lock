@@ -6,7 +6,9 @@ requires-python = ">=3.14"
 name = "agentlab"
 version = "0.1.0"
 source = { editable = "." }
-dependencies = [
+
+[package.optional-dependencies]
+anthropic = [
     { name = "anthropic" },
 ]
 
@@ -17,7 +19,8 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "anthropic", specifier = ">=1.11,<2" }]
+requires-dist = [{ name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=1.11,<2" }]
+provides-extras = ["anthropic"]
 
 [package.metadata.requires-dev]
 dev = [

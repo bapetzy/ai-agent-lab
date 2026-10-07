@@ -1,6 +1,6 @@
 # E000 — Bare agent loop
 
-**Status:** script ready and its loop logic tested offline. **Not yet run against the real API** (no API key on this machine as of 2026-10-07).
+**Status:** script ready and its loop logic tested offline. **Not run live.** Free-first (D-026): this script is the *optional Anthropic variant*; it needs the `anthropic` extra and a paid key, so it will not be run unless the owner chooses to. A local-model variant (raw HTTP to `llama-server`) is planned after MODEL-GATEWAY step 7.
 
 ## Question
 

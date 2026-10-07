@@ -1,10 +1,12 @@
-"""The E000 script's loop logic, checked offline with a scripted model."""
+"""The E000 script's loop logic, checked offline with a tiny fake client.
 
+E000 is an optional, Anthropic-specific experiment (it needs the `anthropic` extra and a paid
+key to run live). Its loop logic is tested here without either."""
+
+import copy
 import importlib.util
 
 from conftest import ROOT
-
-from agentlab.scripted import ScriptedClient, response, text, tool_use
 
 
 def load_bare_loop():
@@ -15,16 +17,43 @@ def load_bare_loop():
     return module
 
 
-def test_bare_loop_runs_one_tool_cycle(capsys):
+class FakeMessage:
+    def __init__(self, data):
+        self.data = data
+
+    def to_dict(self):
+        return self.data
+
+
+class FakeClient:
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.requests = []
+        self.messages = self
+
+    def create(self, **params):
+        self.requests.append(copy.deepcopy(params))  # the loop keeps mutating its list
+        return FakeMessage(self.replies.pop(0))
+
+
+def test_bare_loop_runs_one_tool_cycle_without_the_sdk(capsys):
     bare = load_bare_loop()
-    client = ScriptedClient(
+    client = FakeClient(
         [
-            response([tool_use("read_note", {"name": "todo"}, "t1")], "tool_use", model=bare.MODEL),
-            response([text("Call Ana and send Ben the agenda.")], "end_turn", model=bare.MODEL),
+            {
+                "stop_reason": "tool_use",
+                "content": [
+                    {"type": "tool_use", "id": "t1", "name": "read_note", "input": {"name": "todo"}}
+                ],
+            },
+            {
+                "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "Call Ana and send Ben the agenda."}],
+            },
         ]
     )
     final = bare.bare_loop(client, "What is on my todo note?")
     assert final == "Call Ana and send Ben the agenda."
-    second_request = client.requests[1]["messages"]
-    assert second_request[-1]["content"][0]["content"].startswith("call Ana")
+    second = client.requests[1]["messages"]
+    assert second[-1]["content"][0]["content"].startswith("call Ana")
     assert "REQUEST" in capsys.readouterr().out

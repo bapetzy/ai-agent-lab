@@ -1,7 +1,11 @@
-"""Live API smoke tests. Deselected by default; they cost money.
+"""Optional live test of the Anthropic adapter. Deselected by default; costs money; needs the
+`anthropic` extra, AGENTLAB_ENABLE_EXTERNAL_API=1 and a key. Never required (free-first).
 
-uv run pytest -m live
+    uv run --extra anthropic pytest -m live
 """
+
+import importlib.util
+import os
 
 import pytest
 
@@ -10,32 +14,31 @@ from agentlab import config
 pytestmark = pytest.mark.live
 
 
-@pytest.fixture
-def api_key():
-    key = config.api_key()
-    if not key:
-        pytest.skip("ANTHROPIC_API_KEY not set")
-    return key
+def test_one_tiny_live_call_records_requested_and_actual_model():
+    if importlib.util.find_spec("anthropic") is None:
+        pytest.skip("anthropic extra not installed")
+    if os.environ.get("AGENTLAB_ENABLE_EXTERNAL_API") != "1" or not config.api_key():
+        pytest.skip("external API not enabled")
 
-
-def test_one_tiny_live_call_records_requested_and_actual_model(api_key):
-    import anthropic
-
+    from agentlab.backends.anthropic import AnthropicBackend
     from agentlab.gateway import ModelGateway
     from agentlab.journal import Journal, Recorder
+    from agentlab.model_types import Message, ModelRequest
 
-    journal = Journal(":memory:", secrets=[api_key])
+    key = config.api_key()
+    journal = Journal(":memory:", secrets=[key])
     rec = Recorder(journal, "live-run", "live-agent", "live-task")
-    gw = ModelGateway(anthropic.Anthropic(api_key=api_key, max_retries=0), rec)
+    gw = ModelGateway(AnthropicBackend(api_key=key), rec)
     out = gw.call(
-        {
-            "model": "claude-opus-5-5",
-            "max_tokens": 1000,
-            "output_config": {"effort": "low"},
-            "messages": [{"role": "user", "content": "Reply with the single word OK."}],
-        }
+        ModelRequest(
+            model="claude-opus-5-5",
+            system="Be brief.",
+            messages=(Message("user", text="Reply with the single word OK."),),
+            tools=(),
+            max_output_tokens=1000,
+            options={"effort": "low"},
+        )
     )
     resp = journal.events("live-run")[-1].payload
     assert resp["actual_model"] == resp["requested_model"] == "claude-opus-5-5"
-    assert resp["request_id"]
-    assert out["usage"]["output_tokens"] > 0
+    assert out.usage.output_tokens > 0

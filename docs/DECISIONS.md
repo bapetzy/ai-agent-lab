@@ -16,7 +16,10 @@ The owner approved Phase 0 on 2026-10-07. Entries D-001 to D-017 below were writ
 | D-013 | **Superseded by D-018** |
 | ARCHITECTURE §5 stack table (Pydantic, rich) | Amended by D-021 |
 | OBSERVABILITY envelope and replay | Refined by D-023 and D-024 |
-| D-003, D-007, D-025 | Proposed amendments D-026 to D-031 (free-first revision, awaiting approval) |
+| D-026, D-027, D-031 | Accepted 2026-10-07; implemented (core refactor, MODEL-GATEWAY steps 1-6) |
+| D-028, D-029, D-030 | Accepted 2026-10-07 as the local runtime/model/tool-calling *candidates*; not implemented (step 7+) |
+| D-003, D-007, D-025 | Amended by D-026, D-027, D-031 |
+| D-032 | Accepted; records the compatibility breaks of the refactor |
 
 ---
 
@@ -202,3 +205,14 @@ The owner approved Phase 0 on 2026-10-07. Entries D-001 to D-017 below were writ
 ### D-031 Runaway guards for $0 backends; journal schema version 2
 - **Status:** Proposed. **Amends D-025.**
 - **Decision:** The spend cap applies only to priced backends. Every backend gets `max_wall_seconds` per run and `request_timeout_s` per model call, plus the existing turn, tool-call and token limits. `run_started.schema_version = 2`; Phase 1 (version 1) runs are not replayable after the refactor.
+
+### D-032 Compatibility breaks of the provider-neutral refactor
+- **Status:** Accepted, implemented (2026-10-07).
+- **Decision / consequences:**
+  - Journal `schema_version` 2. Phase 1 (v1) runs remain readable by `trace`, `show`, `runs`, but `replay` reports them NOT REPLAYABLE and `rerun` refuses them.
+  - Event payloads: `tool_use_id` -> `tool_call_id`; `tool_requested` carries `arguments`, `raw_arguments`, `parse_error` (was `input`); `model_request` carries `backend`, `max_output_tokens`, `options`, `request_blob` (neutral) and `wire_blob` (backend body); `model_response` carries `finish_reason` (closed set) and `provider_finish_reason` instead of `stop_reason`, neutral `usage`, `tool_calls` instead of `tool_uses`.
+  - Run failure reasons: `stop_reason:X` -> `finish_reason:X`; `model:api_error` -> `model:model_error`.
+  - Task files: `[agent].model`/`effort` -> `[model] backend, name, temperature, seed, options`.
+  - Scripts for the scripted backend are provider-neutral JSON; Anthropic-shaped scripts no longer load.
+  - The `anthropic` package is no longer installed by `uv sync`; `uv sync --extra anthropic` adds it.
+  - Free backends report `cost_usd: null`; the spend cap applies only to priced backends; new limits `max_wall_seconds` (default 900) and `request_timeout_s` (default 300).

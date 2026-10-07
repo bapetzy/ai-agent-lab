@@ -82,6 +82,10 @@ AI-Agent-Lab/
 
 Delegation, multiple agents, code execution, sandbox, memory beyond the workspace, MCP, web access, web UI, OTel.
 
+## Free-first core refactor ✅ implemented 2026-10-07 (MODEL-GATEWAY.md steps 1-6)
+
+Provider-neutral internal types, scripted backend, loop/kernel/gateway/budget/replay on neutral types, journal schema v2, `anthropic` moved to an optional extra. Offline guarantees are tested (no SDK, no key, no network). Next: step 7, the local `OpenAICompatBackend` for llama.cpp `llama-server` (not started; nothing installed or downloaded).
+
 ## Phase 2 — Multi-agent and sandboxed execution
 
 - `delegate` (synchronous, concurrent within a turn), task tree, capability attenuation, budget carving, cycle/depth/fan-out guards.

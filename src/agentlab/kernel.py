@@ -1,6 +1,7 @@
-"""The kernel: every tool call the model asks for passes through ``Kernel.handle``.
+"""The kernel: every tool call the model proposes passes through ``Kernel.handle``.
 
-    tool_requested
+    tool_requested            (arguments, raw arguments, parse error if any)
+      -> malformed arguments? tool_failed (invalid_input)   nothing runs
       -> unknown tool?        tool_failed (unknown_tool)
       -> bad input?           tool_failed (invalid_input)
       -> path outside?        tool_failed (invalid_path)
@@ -10,8 +11,9 @@
     tool_started
     tool_completed | tool_failed
 
-Whatever happens, the model gets a ``tool_result`` back. Errors and denials are results
-with ``is_error: true`` and an explanation, so the model can adapt.
+The kernel only understands ``ToolCall`` in and ``ToolResult`` out (model_types.py). It does
+not know which model or provider produced the call. Whatever happens, the model gets a result
+back; errors and denials are results with ``is_error=True`` and a JSON explanation.
 
 This is application-level mediation. It controls what agents can do through these tools;
 it is not an OS-level security boundary (see docs/SANDBOX.md).
@@ -24,6 +26,7 @@ import time
 from collections.abc import Callable
 
 from agentlab.journal import Recorder
+from agentlab.model_types import ToolCall, ToolResult
 from agentlab.policy import Policy
 from agentlab.tools import Tool, validate_input
 from agentlab.workspace import Workspace, WorkspaceError
@@ -37,15 +40,6 @@ def deny_all(request: dict) -> dict:
 
 def approve_all(request: dict) -> dict:
     return {"approved": True, "by": "auto-approve", "note": ""}
-
-
-def _error_result(tool_use_id: str, error: dict) -> dict:
-    return {
-        "type": "tool_result",
-        "tool_use_id": tool_use_id,
-        "content": json.dumps(error),
-        "is_error": True,
-    }
 
 
 class Kernel:
@@ -63,42 +57,61 @@ class Kernel:
         self.approver = approver
         self.tools = tools
 
-    def _fail(self, call_id: str, tool: str, error_type: str, message: str, **extra) -> dict:
+    def _error(self, call: ToolCall, error: dict) -> ToolResult:
+        return ToolResult(call.id, call.name, json.dumps(error), is_error=True)
+
+    def _fail(self, call: ToolCall, error_type: str, message: str, **extra) -> ToolResult:
         self.rec.emit(
             "tool_failed",
             {
-                "tool_use_id": call_id,
-                "tool": tool,
+                "tool_call_id": call.id,
+                "tool": call.name,
                 "error_type": error_type,
                 "message": message,
                 **extra,
             },
         )
-        return _error_result(call_id, {"error": error_type, "message": message})
+        return self._error(call, {"error": error_type, "message": message})
 
-    def handle(self, call: dict) -> dict:
-        call_id, name, args = call["id"], call["name"], call["input"]
-        self.rec.emit("tool_requested", {"tool_use_id": call_id, "tool": name, "input": args})
+    def handle(self, call: ToolCall) -> ToolResult:
+        self.rec.emit(
+            "tool_requested",
+            {
+                "tool_call_id": call.id,
+                "tool": call.name,
+                "arguments": call.arguments,
+                "raw_arguments": call.raw_arguments,
+                "parse_error": call.parse_error,
+            },
+        )
 
-        # 1. Is it a real tool, with valid input, pointing inside the workspace?
-        tool = self.tools.get(name)
+        # 1. Is it a well-formed call to a real tool, pointing inside the workspace?
+        if call.arguments is None:
+            return self._fail(
+                call,
+                "invalid_input",
+                f"{call.parse_error}; the call was not executed. "
+                f"Received: {call.raw_arguments[:200]}",
+            )
+        tool = self.tools.get(call.name)
         if tool is None:
-            return self._fail(call_id, name, "unknown_tool", f"there is no tool named {name!r}")
+            return self._fail(call, "unknown_tool", f"there is no tool named {call.name!r}")
+        args = call.arguments
         if (problem := validate_input(tool, args)) is not None:
-            return self._fail(call_id, name, "invalid_input", problem)
+            return self._fail(call, "invalid_input", problem)
         try:
             # canonical workspace-relative path; "." is the workspace root
             path = self.workspace.relative(self.workspace.resolve(args["path"]))
         except WorkspaceError as e:
-            return self._fail(call_id, name, "invalid_path", str(e))
+            return self._fail(call, "invalid_path", str(e))
 
         # 2. May this agent do it? Policy first, then a human if the policy says "ask".
         verdict = self.policy.check(tool.capability, path)
         self.rec.emit(
             "permission_checked",
             {
-                "tool_use_id": call_id,
-                "tool": name,
+                "tool_call_id": call.id,
+                "tool": call.name,
                 "capability": tool.capability,
                 "path": path,
                 "decision": verdict.decision,
@@ -109,19 +122,19 @@ class Kernel:
         allowed = verdict.decision == "allow"
         if verdict.decision == "ask":
             request = {
-                "tool": name,
+                "tool": call.name,
                 "input": args,
                 "capability": tool.capability,
                 "path": path,
                 "rule": verdict.rule_id,
             }
-            self.rec.emit("approval_requested", {"tool_use_id": call_id, **request})
+            self.rec.emit("approval_requested", {"tool_call_id": call.id, **request})
             answer = self.approver(request)
-            self.rec.emit("approval_resolved", {"tool_use_id": call_id, **answer})
+            self.rec.emit("approval_resolved", {"tool_call_id": call.id, **answer})
             decided_by, note, allowed = "human", answer.get("note", ""), bool(answer["approved"])
 
         facts = {
-            "tool_use_id": call_id,
+            "tool_call_id": call.id,
             "capability": tool.capability,
             "path": path,
             "rule": verdict.rule_id,
@@ -129,8 +142,8 @@ class Kernel:
         }
         if not allowed:
             self.rec.emit("permission_denied", {**facts, "note": note})
-            return _error_result(
-                call_id,
+            return self._error(
+                call,
                 {
                     "error": "permission_denied",
                     "capability": tool.capability,
@@ -143,36 +156,28 @@ class Kernel:
         self.rec.emit("permission_approved", facts)
 
         # 3. Run it.
-        self.rec.emit("tool_started", {"tool_use_id": call_id, "tool": name})
+        self.rec.emit("tool_started", {"tool_call_id": call.id, "tool": call.name})
         started = time.perf_counter()
+
+        def ms() -> float:
+            return round((time.perf_counter() - started) * 1000, 3)
+
         try:
             out = tool.run(self.workspace, args)
         except WorkspaceError as e:
-            return self._fail(
-                call_id,
-                name,
-                "WorkspaceError",
-                str(e),
-                duration_ms=round((time.perf_counter() - started) * 1000, 3),
-            )
+            return self._fail(call, "WorkspaceError", str(e), duration_ms=ms())
         except Exception as e:  # a bug in a tool: record it, tell the model, keep going
-            return self._fail(
-                call_id,
-                name,
-                type(e).__name__,
-                str(e),
-                duration_ms=round((time.perf_counter() - started) * 1000, 3),
-            )
+            return self._fail(call, type(e).__name__, str(e), duration_ms=ms())
         self.rec.emit(
             "tool_completed",
             {
-                "tool_use_id": call_id,
-                "tool": name,
-                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+                "tool_call_id": call.id,
+                "tool": call.name,
+                "duration_ms": ms(),
                 "output_chars": len(out.text),
                 "output_preview": out.text[:200],
                 "output_blob": self.rec.blob({"text": out.text}),
                 "details": out.details,
             },
         )
-        return {"type": "tool_result", "tool_use_id": call_id, "content": out.text}
+        return ToolResult(call.id, call.name, out.text, is_error=False)

@@ -1,6 +1,6 @@
 # Free-first, local-first
 
-Status: **PROPOSED** (architecture revision, 2026-10-07). Nothing in this document is implemented yet unless marked IMPLEMENTED. Companion documents: `LOCAL-LLM.md` (runtime and model choice), `MODEL-GATEWAY.md` (the backend-neutral model interface and the implementation plan).
+Status (2026-10-07): principles **approved**; provider-neutral core **IMPLEMENTED** (MODEL-GATEWAY steps 1-6); local model backend **PROPOSED** (step 7, not started). §3 is the audit of the Phase 1 code as it was *before* the refactor; that coupling has since been removed from the core (see MODEL-GATEWAY.md status). Companion documents: `LOCAL-LLM.md` (runtime and model choice), `MODEL-GATEWAY.md` (the backend-neutral model interface and the implementation plan).
 
 ## 1. The rule
 
@@ -8,9 +8,9 @@ The lab must be fully useful with **zero spending on model APIs**. Concretely:
 
 | Path | What it is | Needs | Status |
 |---|---|---|---|
-| **Tests** | Scripted (fake) model | Nothing: no internet, no key, no local model | IMPLEMENTED (Anthropic-shaped; to be made backend-neutral) |
+| **Tests** | Scripted (fake) model | Nothing: no internet, no key, no local model | IMPLEMENTED, provider-neutral (`backends/scripted.py`); tests prove no SDK, key or network is needed |
 | **Real AI, default** | Local model through a local runtime | The runtime (free, open source) and a model file (free to download) | PROPOSED |
-| **Real AI, optional** | External API adapter (Anthropic, maybe others) | An API key the owner chooses to pay for | IMPLEMENTED today as the *only* live path; to be demoted to an optional, disabled-by-default extra |
+| **Real AI, optional** | External API adapter (Anthropic, maybe others) | An API key the owner chooses to pay for | IMPLEMENTED as an optional adapter (`backends/anthropic.py`), off by default: needs the `anthropic` extra, `AGENTLAB_ENABLE_EXTERNAL_API=1` and a key. Not exercised live since the refactor. |
 
 Never required: Anthropic credits, OpenAI credits, paid SaaS, subscriptions, cloud agent services.
 

@@ -30,7 +30,7 @@ EVENT_TYPES = frozenset(
         "model_response",  # what came back (full body in a blob) + usage + actual model
         "model_retry",  # a transient API error; the kernel will try again
         "model_error",  # a final API error
-        "tool_requested",  # the model asked for a tool (tool_use block)
+        "tool_requested",  # the model proposed a tool call (normalised ToolCall)
         "permission_checked",  # policy verdict: allow / deny / ask, and which rule
         "approval_requested",  # policy said "ask": waiting for a human
         "approval_resolved",  # the human's answer

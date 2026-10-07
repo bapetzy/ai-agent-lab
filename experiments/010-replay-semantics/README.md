@@ -1,6 +1,6 @@
 # E010 — Replay semantics
 
-**Status:** run 2026-10-07, offline (scripted model). Results below.
+**Status:** run 2026-10-07, offline (scripted model). Results below. **Re-run 2026-10-07 after the provider-neutral refactor (journal schema v2, `ScriptedBackend`, `ModelError`): the same 9 outcomes.** R1 now prints 66 trace lines (the demo script gained a malformed call); R5/R6 use neutral `transient`/`permanent` errors instead of HTTP 429/400. `results/e010-results.md` holds the v2 table.
 
 ## Question
 

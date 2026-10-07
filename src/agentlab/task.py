@@ -1,9 +1,10 @@
-"""Tasks: what the agent should do, with which configuration, and how we check the result.
+"""Tasks: what the agent should do, with which model and limits, and how we check the result.
 
 A task is a directory:
 
     tasks/<name>/
-        task.toml      prompt, agent config, limits, policy, checks
+        task.toml      [task] prompt, [model] backend + model name, [agent] system prompt +
+                       tools, [limits], [[policy]] rules, [[check]]s
         workspace/     the files the agent starts with (copied for every run)
 
 Checks are deterministic. They decide task *success*, which is a different thing from the
@@ -24,13 +25,15 @@ from agentlab.tools import TOOLS
 from agentlab.workspace import Workspace, WorkspaceError
 
 CHECK_TYPES = {"file_exists", "file_contains", "file_not_contains", "final_text_contains"}
+BACKENDS = {"scripted", "openai_compat", "anthropic"}
 
 
 @dataclass
 class Task:
     name: str
     prompt: str
-    agent: dict  # model, system, tools, optional effort
+    model: dict  # backend, name, temperature, seed, options
+    agent: dict  # system, tools
     limits: Limits
     policy: Policy
     checks: list[dict]
@@ -43,8 +46,22 @@ class Task:
 
     @classmethod
     def from_dict(cls, data: dict, *, workspace_fixture: Path) -> Task:
+        m = dict(data.get("model", {}))
+        if m.get("backend") not in BACKENDS:
+            raise ValueError(
+                f"[model] backend must be one of {sorted(BACKENDS)}, got {m.get('backend')!r}"
+            )
+        if not m.get("name"):
+            raise ValueError("[model] needs 'name'")
+        model = {
+            "backend": m["backend"],
+            "name": m["name"],
+            "options": m.get("options", {}),
+            "temperature": m.get("temperature"),
+            "seed": m.get("seed"),
+        }
         agent = dict(data["agent"])
-        for key in ("model", "system", "tools"):
+        for key in ("system", "tools"):
             if key not in agent:
                 raise ValueError(f"[agent] needs {key!r}")
         unknown = [t for t in agent["tools"] if t not in TOOLS]
@@ -57,6 +74,7 @@ class Task:
         return cls(
             name=data["task"]["name"],
             prompt=data["task"]["prompt"],
+            model=model,
             agent=agent,
             limits=Limits(**data.get("limits", {})),
             policy=Policy.from_rules(data.get("policy", [])),

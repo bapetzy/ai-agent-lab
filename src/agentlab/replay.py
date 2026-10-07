@@ -6,18 +6,23 @@
 2. Deterministic re-execution (``replay_run``, ``agent-lab replay``):
    run the *current* kernel code again, but feed it the recorded inputs instead of the
    outside world: recorded model responses, recorded human decisions, the recorded
-   workspace fixture. Each request the kernel builds must be byte-identical to the
-   recorded one, and the new events must match the recorded events. If they do, the
-   kernel's behaviour for this run is reproduced exactly. Tool calls are really executed
-   again (in a fresh temporary workspace), which checks that the tools are deterministic.
-   The model is NOT called. This proves nothing about the model; it tests the kernel.
+   workspace fixture. Each request the kernel builds must equal the recorded one, and the
+   new events must match the recorded events. If they do, the kernel's behaviour for this
+   run is reproduced exactly. Tool calls are really executed again (in a fresh temporary
+   workspace), which checks that the tools are deterministic. No model and no backend is
+   called: this needs no API key, no local server, no network. It tests the kernel, not
+   the model.
 
-3. Model re-execution (``agent-lab rerun``): send the same task to the real model again.
-   That is a NEW run with a new sample from the model. It is not replay.
+3. Model re-execution (``agent-lab rerun``): send the same task to the model again. That
+   is a NEW run with a new sample from the model. It is not replay.
 
-Not reproduced by (2): timestamps, durations, event ids, API request ids, transient API
-errors and their retries (only successful responses are served), and anything the model
-would do differently if asked again.
+Recordings are provider-neutral (schema version 2): the same replay works whether the run
+used the scripted backend, a local model or an external API. Phase 1 recordings (schema 1,
+Anthropic-shaped) are refused.
+
+Not reproduced by (2): timestamps, durations, wall-clock limits, event ids, API request ids,
+transient errors and their retries (only successful responses are served), and anything the
+model would do differently if asked again.
 """
 
 from __future__ import annotations
@@ -26,21 +31,30 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from anthropic.types import Message
-
 from agentlab.journal import Journal, canonical_json
-from agentlab.run import start_run
+from agentlab.model_types import ModelRequest, ModelResponse
+from agentlab.run import SCHEMA_VERSION, start_run
 from agentlab.task import Task
 from agentlab.workspace import Workspace
 
-# Payload fields that legitimately differ between the original run and its replay.
-VOLATILE = {"duration_ms", "request_id", "workspace", "model_backend", "versions", "traceback"}
+# Payload fields that legitimately differ between the original run and its replay
+# (removed at any depth before comparing).
+VOLATILE = {
+    "duration_ms",
+    "request_id",
+    "workspace",
+    "backend",
+    "versions",
+    "traceback",
+    "elapsed_s",
+    "wire_blob",
+}
 
 NOT_REPRODUCED = [
-    "timestamps and durations (recorded, not re-measured)",
+    "timestamps, durations and wall-clock limits (recorded, not re-measured)",
     "event ids and API request ids",
-    "transient API errors and retries (model_retry events are skipped)",
-    "model sampling: responses are served from the recording, the model is not called",
+    "transient errors and retries (model_retry events are skipped)",
+    "model sampling: responses are served from the recording, no model is called",
 ]
 
 
@@ -48,28 +62,40 @@ class ReplayDivergence(Exception):
     pass
 
 
-class ReplayClient:
+class ReplayBackend:
     """Serves recorded responses, but only if the kernel asks exactly the recorded question."""
 
-    def __init__(self, requests: list[dict], responses: list[dict]):
+    name = "replay"
+
+    def __init__(self, requests: list[dict], responses: list[dict], prices: dict | None):
         self.recorded_requests = requests
         self.recorded_responses = responses
-        self.messages = self
+        self._prices = prices
         self.calls = 0
         self.identical = 0
 
-    def create(self, **params) -> Message:
+    def wire_request(self, request: ModelRequest) -> dict:
+        return request.to_dict()
+
+    def complete(self, request: ModelRequest) -> ModelResponse:
         i = self.calls
         self.calls += 1
         if i >= len(self.recorded_responses):
             raise ReplayDivergence(f"request {i + 1}: the recording has no response for it")
-        if canonical_json(params) != canonical_json(self.recorded_requests[i]):
+        current = request.to_dict()
+        if canonical_json(current) != canonical_json(self.recorded_requests[i]):
             raise ReplayDivergence(
                 f"request {i + 1} differs from the recorded request: "
-                f"{_first_difference(self.recorded_requests[i], params)}"
+                f"{_first_difference(self.recorded_requests[i], current)}"
             )
         self.identical += 1
-        return Message.model_validate(self.recorded_responses[i])
+        return ModelResponse.from_dict(self.recorded_responses[i])
+
+    def describe(self) -> dict:
+        return {"name": self.name, "recorded_responses": len(self.recorded_responses)}
+
+    def prices(self, model: str) -> dict | None:
+        return self._prices
 
 
 def _first_difference(old: dict, new: dict) -> str:
@@ -84,8 +110,12 @@ def _first_difference(old: dict, new: dict) -> str:
     return "unknown difference"
 
 
-def _normalize(payload: dict) -> dict:
-    return {k: v for k, v in payload.items() if k not in VOLATILE}
+def _strip_volatile(value):
+    if isinstance(value, dict):
+        return {k: _strip_volatile(v) for k, v in value.items() if k not in VOLATILE}
+    if isinstance(value, list):
+        return [_strip_volatile(v) for v in value]
+    return value
 
 
 @dataclass
@@ -107,6 +137,15 @@ def replay_run(journal: Journal, run_id: str, *, work_dir: Path | None = None) -
     report = ReplayReport(run_id)
     report.original_status = recorded[-1].type
 
+    version = started.get("schema_version", 1)
+    if version != SCHEMA_VERSION:
+        report.differences.append(
+            f"unsupported schema_version {version}: this run was recorded before the "
+            f"provider-neutral refactor (schema {SCHEMA_VERSION}) and cannot be replayed; "
+            "it can still be inspected with `agent-lab trace`/`show`"
+        )
+        return report
+
     requests = [
         journal.get_blob(e.payload["request_blob"]) for e in recorded if e.type == "model_request"
     ]
@@ -114,7 +153,7 @@ def replay_run(journal: Journal, run_id: str, *, work_dir: Path | None = None) -
         journal.get_blob(e.payload["response_blob"]) for e in recorded if e.type == "model_response"
     ]
     decisions = [
-        {k: v for k, v in e.payload.items() if k != "tool_use_id"}
+        {k: v for k, v in e.payload.items() if k != "tool_call_id"}
         for e in recorded
         if e.type == "approval_resolved"
     ]
@@ -128,22 +167,21 @@ def replay_run(journal: Journal, run_id: str, *, work_dir: Path | None = None) -
     task = Task.from_dict(started["task_source"], workspace_fixture=Path("(recorded)"))
     work_dir = Path(work_dir or tempfile.mkdtemp(prefix="agentlab-replay-"))
     workspace = Workspace.from_files(journal.get_blob(started["fixture_blob"]), work_dir / run_id)
-    client = ReplayClient(requests, responses)
+    backend = ReplayBackend(requests, responses, started["prices_per_mtok"])
     scratch = Journal(":memory:")  # replay never writes to the real journal
     first = recorded[0]
     result = start_run(
         task,
         scratch,
-        client,
+        backend,
         approver=recorded_approver,
         runs_dir=work_dir,
-        model_backend="replay",
-        prices=started["prices_per_mtok"],
         ids=(run_id, first.agent_id, first.task_id),
         workspace=workspace,
         sleep=lambda s: None,
+        clock=lambda: 0.0,  # wall-clock limits are not replayed
     )
-    report.identical_requests = client.identical
+    report.identical_requests = backend.identical
     replayed = scratch.events(run_id)
     report.replay_status = replayed[-1].type
 
@@ -155,12 +193,9 @@ def replay_run(journal: Journal, run_id: str, *, work_dir: Path | None = None) -
         if old.type != new.type:
             report.differences.append(f"event {i + 1}: type {old.type} -> {new.type}")
             break
-        if canonical_json(_normalize(old.payload)) != canonical_json(_normalize(new.payload)):
-            changed = sorted(
-                k
-                for k in set(old.payload) | set(new.payload)
-                if k not in VOLATILE and old.payload.get(k) != new.payload.get(k)
-            )
+        a, b = _strip_volatile(old.payload), _strip_volatile(new.payload)
+        if canonical_json(a) != canonical_json(b):
+            changed = sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
             report.differences.append(f"event {i + 1} ({old.type}): {', '.join(changed)} differ")
             break
     if len(recorded) != len(replayed) and not report.differences:
@@ -170,7 +205,7 @@ def replay_run(journal: Journal, run_id: str, *, work_dir: Path | None = None) -
 
 
 def reconstruct_transcript(journal: Journal, run_id: str) -> dict:
-    """The full conversation as the model last saw it, plus its last answer."""
+    """The full conversation as the model last saw it, plus its last answer (neutral form)."""
     events = journal.events(run_id)
     last_request = next(e for e in reversed(events) if e.type == "model_request")
     body = journal.get_blob(last_request.payload["request_blob"])
@@ -178,5 +213,7 @@ def reconstruct_transcript(journal: Journal, run_id: str) -> dict:
     messages = list(body["messages"])
     if responses and responses[-1].payload["turn"] == last_request.payload["turn"]:
         final = journal.get_blob(responses[-1].payload["response_blob"])
-        messages.append({"role": "assistant", "content": final["content"]})
+        messages.append(
+            {"role": "assistant", "text": final["text"], "tool_calls": final["tool_calls"]}
+        )
     return {"system": body.get("system"), "tools": body.get("tools"), "messages": messages}

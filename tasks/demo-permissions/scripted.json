@@ -1,47 +1,37 @@
 [
   {
-    "id": "msg_scripted_1", "type": "message", "role": "assistant", "model": "scripted-fake",
-    "stop_reason": "tool_use", "stop_sequence": null,
-    "usage": {"input_tokens": 0, "output_tokens": 0},
-    "content": [
-      {"type": "text", "text": "Let me see which files exist."},
-      {"type": "tool_use", "id": "toolu_demo_1", "name": "list_files", "input": {"path": "."}}
-    ]
+    "text": "Let me see which files exist.",
+    "tool_calls": [
+      {"id": "call_demo_1", "name": "list_files", "arguments": {"path": "."}}
+    ],
+    "model": "scripted-fake"
   },
   {
-    "id": "msg_scripted_2", "type": "message", "role": "assistant", "model": "scripted-fake",
-    "stop_reason": "tool_use", "stop_sequence": null,
-    "usage": {"input_tokens": 0, "output_tokens": 0},
-    "content": [
-      {"type": "tool_use", "id": "toolu_demo_2", "name": "read_file", "input": {"path": "notes/meeting.md"}},
-      {"type": "tool_use", "id": "toolu_demo_3", "name": "read_file", "input": {"path": "notes/missing.md"}}
-    ]
+    "text": "",
+    "tool_calls": [
+      {"id": "call_demo_2", "name": "read_file", "arguments": {"path": "notes/meeting.md"}},
+      {"id": "call_demo_3", "name": "read_file", "arguments": {"path": "notes/missing.md"}}
+    ],
+    "model": "scripted-fake"
   },
   {
-    "id": "msg_scripted_3", "type": "message", "role": "assistant", "model": "scripted-fake",
-    "stop_reason": "tool_use", "stop_sequence": null,
-    "usage": {"input_tokens": 0, "output_tokens": 0},
-    "content": [
-      {"type": "text", "text": "I will note the summary in the readme and mark Ben's item done in the notes."},
-      {"type": "tool_use", "id": "toolu_demo_4", "name": "write_file", "input": {"path": "readme.txt", "content": "Summary: Ana, Citra"}},
-      {"type": "tool_use", "id": "toolu_demo_5", "name": "write_file", "input": {"path": "notes/meeting.md", "content": "# Team meeting\n\n- Ana: book the venue (open)\n- Citra: collect budget numbers (open)\n"}}
-    ]
+    "text": "I will note the summary in the readme and mark Ben's item done in the notes.",
+    "tool_calls": [
+      {"id": "call_demo_4", "name": "write_file", "arguments": {"path": "readme.txt", "content": "Summary: Ana, Citra"}},
+      {"id": "call_demo_5", "name": "write_file", "arguments": {"path": "notes/meeting.md", "content": "# Team meeting\n\n- Ana: book the venue (open)\n- Citra: collect budget numbers (open)\n"}},
+      {"id": "call_demo_6", "name": "write_file", "raw_arguments": "{\"path\": \"out/summary.md\", \"content\": \"unterminated"}
+    ],
+    "model": "scripted-fake"
   },
   {
-    "id": "msg_scripted_4", "type": "message", "role": "assistant", "model": "scripted-fake",
-    "stop_reason": "tool_use", "stop_sequence": null,
-    "usage": {"input_tokens": 0, "output_tokens": 0},
-    "content": [
-      {"type": "text", "text": "The readme is off limits. Writing to out/ instead."},
-      {"type": "tool_use", "id": "toolu_demo_6", "name": "write_file", "input": {"path": "out/summary.md", "content": "# Open action items\n\n- [Ana] book the venue\n- [Citra] collect budget numbers\n"}}
-    ]
+    "text": "The readme is off limits and my last call was malformed. Writing to out/ properly.",
+    "tool_calls": [
+      {"id": "call_demo_7", "name": "write_file", "arguments": {"path": "out/summary.md", "content": "# Open action items\n\n- [Ana] book the venue\n- [Citra] collect budget numbers\n"}}
+    ],
+    "model": "scripted-fake"
   },
   {
-    "id": "msg_scripted_5", "type": "message", "role": "assistant", "model": "scripted-fake",
-    "stop_reason": "end_turn", "stop_sequence": null,
-    "usage": {"input_tokens": 0, "output_tokens": 0},
-    "content": [
-      {"type": "text", "text": "Done: 2 open action items written to out/summary.md."}
-    ]
+    "text": "Done: 2 open action items written to out/summary.md.",
+    "model": "scripted-fake"
   }
 ]

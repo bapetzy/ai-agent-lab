@@ -6,9 +6,12 @@ authors = [
     { email = "bryan2306paulo@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = [
-    "anthropic>=1.11,<2",
-]
+# Core: Python standard library only (free-first, D-026/D-027).
+dependencies = []
+
+[project.optional-dependencies]
+# Optional, off by default, never required: the external Anthropic adapter.
+anthropic = ["anthropic>=1.11,<2"]
 
 [project.scripts]
 agent-lab = "agentlab.cli:main"
@@ -26,7 +29,7 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "live: calls the real Anthropic API (costs money; needs ANTHROPIC_API_KEY). Deselected by default.",
+    "live: calls an external paid API (optional adapter; needs the anthropic extra, AGENTLAB_ENABLE_EXTERNAL_API=1 and a key). Deselected by default; never required.",
 ]
 addopts = "-m 'not live'"
 

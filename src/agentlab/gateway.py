@@ -1,84 +1,66 @@
-"""The model gateway: the only code that talks to the model.
+"""The model gateway: the one place the loop's requests leave for a backend.
 
-For every call it:
+It works the same for every backend (scripted, local, optional external API):
 
-1. checks the request only *appends* to the previous one (same system prompt, same tools,
-   earlier messages byte-identical). Opus 5.5 rejects edited histories, and replay needs
-   it. A violation is a kernel bug, so it fails loudly before anything is sent.
-2. journals ``model_request`` (full request body stored as a blob; no API key in it: the
-   SDK puts the key in an HTTP header, which we never record).
-3. calls ``client.messages.create`` and retries transient errors itself (the SDK's own
-   retries are turned off) so every attempt is a ``model_retry`` event.
-4. journals ``model_response`` (full response as a blob, usage, stop reason, request id,
-   requested and actual model).
-5. refuses a response from a model other than the one requested. We never send the
-   ``fallbacks`` parameter, so the API should not switch models; if it ever does, the run
-   fails instead of silently continuing on another model.
-
-Thinking blocks come back with empty text (the API's default ``display: "omitted"``) and an
-opaque signature. They are stored and passed back unchanged; we never see or log reasoning.
+1. checks the request only *appends* to the previous one: same system prompt, same tools,
+   same model, earlier messages unchanged. Some APIs reject edited histories, local servers
+   reuse their cache only for an unchanged prefix, and replay needs it. A violation is a
+   kernel bug, so it fails before anything is sent.
+2. journals ``model_request``: the neutral request and the exact wire body the backend will
+   send, both as blobs.
+3. asks the backend, retrying ``transient`` errors itself (each attempt is an event);
+   ``unavailable`` (e.g. local server not running) and ``permanent`` errors fail at once.
+4. journals ``model_response``: finish reason, usage, tool calls with their raw arguments
+   and parse errors, timings, the full response as a blob.
+5. refuses a response from a model other than the one requested. No backend may silently
+   switch models (D-018).
 """
 
 from __future__ import annotations
 
 import time
-from typing import Any
-
-import anthropic
 
 from agentlab.journal import Recorder, canonical_json
-
-RETRYABLE_STATUS = {408, 409, 429}
+from agentlab.model_types import ModelBackend, ModelError, ModelRequest, ModelResponse
 
 
 class ModelCallFailed(Exception):
     def __init__(self, reason: str, message: str):
         super().__init__(f"{reason}: {message}")
-        self.reason = reason  # api_error | model_mismatch | prefix_violation
+        self.reason = reason  # model_error | model_mismatch | prefix_violation
         self.message = message
 
 
-def _is_retryable(e: anthropic.APIError) -> bool:
-    if isinstance(e, anthropic.APIConnectionError):  # includes timeouts
-        return True
-    status = getattr(e, "status_code", None)
-    return status is not None and (status in RETRYABLE_STATUS or status >= 500)
-
-
-def _error_info(e: Exception) -> dict:
-    return {
-        "error_type": type(e).__name__,
-        "message": str(e)[:1000],
-        "status_code": getattr(e, "status_code", None),
-        "request_id": getattr(e, "request_id", None),
-    }
-
-
 class ModelGateway:
-    def __init__(self, client: Any, rec: Recorder, *, max_attempts: int = 3, sleep=time.sleep):
-        self.client = client
+    def __init__(
+        self, backend: ModelBackend, rec: Recorder, *, max_attempts: int = 3, sleep=time.sleep
+    ):
+        self.backend = backend
         self.rec = rec
         self.max_attempts = max_attempts
         self.sleep = sleep
         self.turn = 0
-        self._previous: dict | None = None  # last request that was sent
+        self._previous: dict | None = None  # last request sent, as a plain dict
 
-    def _check_prefix(self, params: dict) -> None:
+    def _check_prefix(self, current: dict) -> None:
         prev = self._previous
         if prev is None:
             return
         for key in ("system", "tools", "model"):
-            if canonical_json(params.get(key)) != canonical_json(prev.get(key)):
+            if canonical_json(current[key]) != canonical_json(prev[key]):
                 raise ModelCallFailed("prefix_violation", f"{key!r} changed between requests")
-        old, new = prev["messages"], params["messages"]
+        old, new = prev["messages"], current["messages"]
         if len(new) < len(old) or canonical_json(new[: len(old)]) != canonical_json(old):
             raise ModelCallFailed("prefix_violation", "earlier messages were edited or removed")
 
-    def call(self, params: dict) -> dict:
+    def call(self, request: ModelRequest) -> ModelResponse:
+        current = request.to_dict()
         try:
-            self._check_prefix(params)
+            self._check_prefix(current)
         except ModelCallFailed as e:
-            self.rec.emit("model_error", {"error_type": e.reason, "message": e.message})
+            self.rec.emit(
+                "model_error", {"kind": "kernel", "error_type": e.reason, "message": e.message}
+            )
             raise
 
         self.turn += 1
@@ -86,60 +68,71 @@ class ModelGateway:
             "model_request",
             {
                 "turn": self.turn,
-                "model": params["model"],
-                "max_tokens": params.get("max_tokens"),
-                "output_config": params.get("output_config"),
-                "thinking": params.get("thinking"),
-                "n_messages": len(params["messages"]),
-                "tools": [t["name"] for t in params.get("tools", [])],
-                "request_blob": self.rec.blob(params),
+                "backend": self.backend.name,
+                "model": request.model,
+                "max_output_tokens": request.max_output_tokens,
+                "temperature": request.temperature,
+                "seed": request.seed,
+                "options": request.options,
+                "n_messages": len(request.messages),
+                "tools": [t.name for t in request.tools],
+                "request_blob": self.rec.blob(current),
+                "wire_blob": self.rec.blob(self.backend.wire_request(request)),
             },
         )
 
         for attempt in range(1, self.max_attempts + 1):
             try:
-                message = self.client.messages.create(**params)
+                response = self.backend.complete(request)
                 break
-            except anthropic.APIError as e:
-                info = _error_info(e)
-                if _is_retryable(e) and attempt < self.max_attempts:
+            except ModelError as e:
+                info = {
+                    "kind": e.kind,
+                    "error_type": e.error_type,
+                    "message": e.message[:1000],
+                    "status_code": e.status,
+                    "request_id": e.request_id,
+                }
+                if e.kind == "transient" and attempt < self.max_attempts:
                     delay = min(2**attempt, 30)
                     self.rec.emit("model_retry", {"attempt": attempt, "delay_s": delay, **info})
                     self.sleep(delay)
                     continue
                 self.rec.emit("model_error", {"attempts": attempt, **info})
-                raise ModelCallFailed("api_error", info["message"]) from e
+                raise ModelCallFailed("model_error", e.message) from e
 
-        data = message.to_dict()
-        actual = data.get("model")
         self.rec.emit(
             "model_response",
             {
                 "turn": self.turn,
-                "requested_model": params["model"],
-                "actual_model": actual,
-                "stop_reason": data.get("stop_reason"),
-                "stop_details": data.get("stop_details"),
-                "usage": data.get("usage"),
-                "request_id": getattr(message, "_request_id", None),
-                "message_id": data.get("id"),
-                "content_types": [b.get("type") for b in data.get("content", [])],
-                "tool_uses": [
-                    {"id": b["id"], "name": b["name"], "input": b["input"]}
-                    for b in data.get("content", [])
-                    if b.get("type") == "tool_use"
+                "backend": self.backend.name,
+                "requested_model": request.model,
+                "actual_model": response.model,
+                "finish_reason": response.finish_reason,
+                "provider_finish_reason": response.provider_finish_reason,
+                "usage": response.to_dict()["usage"],
+                "request_id": response.request_id,
+                "text": response.text,
+                "tool_calls": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "arguments": c.arguments,
+                        "raw_arguments": c.raw_arguments,
+                        "parse_error": c.parse_error,
+                    }
+                    for c in response.tool_calls
                 ],
-                "text": "".join(
-                    b.get("text", "") for b in data.get("content", []) if b.get("type") == "text"
-                ),
-                "response_blob": self.rec.blob(data),
+                "reasoning_chars": len(response.reasoning or ""),
+                "timings": response.timings,
+                "response_blob": self.rec.blob(response.to_dict()),
             },
         )
-        if actual != params["model"]:
+        if response.model != request.model:
             raise ModelCallFailed(
                 "model_mismatch",
-                f"requested {params['model']!r} but the response came from {actual!r}; "
+                f"requested {request.model!r} but the response came from {response.model!r}; "
                 "model fallback is disabled",
             )
-        self._previous = params
-        return data
+        self._previous = current
+        return response

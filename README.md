@@ -10,8 +10,8 @@ This project is the "AI that can use my computer" rabbit hole (Stages 7–8) of 
 
 - **Phase 0** (research and architecture): approved 2026-10-07.
 - **Phase 1** (walking skeleton: one agent, fully observed): implemented 2026-10-07, awaiting review. No multi-agent, no code execution, no UI.
-- Live API runs have **not** happened yet: no API key on this machine. Everything below works offline with a scripted (fake) model.
-- **Free-first revision (PROPOSED, 2026-10-07):** the lab must run with zero paid API usage. Default real model becomes a local model (llama.cpp `llama-server` + Qwen3-1.7B); the Anthropic adapter becomes optional and off by default. See [docs/FREE-FIRST.md](docs/FREE-FIRST.md), [docs/LOCAL-LLM.md](docs/LOCAL-LLM.md), [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md). The live commands below that need `ANTHROPIC_API_KEY` will be replaced.
+- No real model has run yet. Everything below works offline with the scripted (fake) model.
+- **Free-first:** the lab runs with zero paid API usage. The provider-neutral core is IMPLEMENTED (2026-10-07): the kernel speaks only its own types; the scripted backend needs no SDK, key, network or model. The local model backend (llama.cpp `llama-server` + Qwen3-1.7B) is PROPOSED and not built yet. The Anthropic adapter is optional and off by default. See [docs/FREE-FIRST.md](docs/FREE-FIRST.md), [docs/LOCAL-LLM.md](docs/LOCAL-LLM.md), [docs/MODEL-GATEWAY.md](docs/MODEL-GATEWAY.md).
 
 Docs mark each part as **IMPLEMENTED**, **PROPOSED** (designed, not built) or **NOT YET VERIFIED**.
 
@@ -19,9 +19,9 @@ Docs mark each part as **IMPLEMENTED**, **PROPOSED** (designed, not built) or **
 
 ```powershell
 uv sync                                   # install (Python 3.14 via uv)
-uv run pytest                             # 84 tests, offline, no API key needed
+uv run pytest                             # 122 tests, offline: no SDK, no key, no network, no model
 
-# Offline demo of every kernel path (allow, deny, ask a human, tool failure), fake model:
+# Offline demo of every kernel path (allow, deny, ask a human, tool failure, malformed call):
 uv run agent-lab run tasks/demo-permissions --scripted tasks/demo-permissions/scripted.json
 uv run agent-lab runs                     # list runs (short id = last 8 characters)
 uv run agent-lab trace <id>               # readable timeline of one run
@@ -29,9 +29,9 @@ uv run agent-lab trace <id> --json        # the run's metrics
 uv run agent-lab show <id> 2              # one event in full, incl. the exact request sent
 uv run agent-lab replay <id>              # re-execute the kernel against the recording
 
-# Live (costs money): put ANTHROPIC_API_KEY in .env (copy .env.example), then
-uv run agent-lab run tasks/e001-meeting-actions
-uv run agent-lab rerun <id>               # a NEW live run with the same task and files
+# Real model: local llama.cpp backend not built yet (MODEL-GATEWAY step 7). Until then:
+uv run agent-lab run tasks/e001-meeting-actions   # explains that the local backend is missing
+uv run agent-lab rerun <id> --scripted FILE       # a NEW run with the recorded task and files
 ```
 
 `--approve ask|yes|no` controls what happens when the policy says "ask a human" (default: prompt in the terminal; denied when there is no terminal).
@@ -42,8 +42,8 @@ uv run agent-lab rerun <id>               # a NEW live run with the same task an
 task.toml + workspace/  ->  run_started (config, policy, starting files recorded)
 loop:
    -> model_request   (whole conversation; stored as a blob)
-   <- model_response  (stop reason, usage, requested vs actual model)
-   for each tool_use the model asked for:
+   <- model_response  (finish reason, usage, requested vs actual model)
+   for each tool call the model proposed (malformed ones are recorded and rejected):
        tool_requested -> permission_checked -> [approval_requested -> approval_resolved]
        -> permission_approved | permission_denied
        -> tool_started -> tool_completed | tool_failed
@@ -56,13 +56,15 @@ check_result (deterministic checks decide success) -> run_completed | run_failed
 
 | File | What it shows |
 |---|---|
-| `experiments/000-bare-agent-loop/bare_loop.py` | The agent loop with nothing else: about 60 lines against the raw API |
+| `experiments/000-bare-agent-loop/bare_loop.py` | The agent loop with nothing else: about 60 lines against a raw API (optional Anthropic variant) |
 | `src/agentlab/agent.py` | The same loop inside the lab: budget check, gateway, kernel |
 | `src/agentlab/kernel.py` | One tool call: validate, policy, human approval, execute, journal |
 | `src/agentlab/policy.py` | Capabilities and first-match rules, default deny |
 | `src/agentlab/workspace.py` | Path confinement (and its limits) |
 | `src/agentlab/tools.py` | The three tools: list, read, write |
-| `src/agentlab/gateway.py` | The only code that talks to the model; prefix check, retries, model check |
+| `src/agentlab/model_types.py` | The kernel's own vocabulary: ModelRequest/Response, ToolCall/Result |
+| `src/agentlab/gateway.py` | Where requests leave for a backend; prefix check, retries, model check |
+| `src/agentlab/backends/` | Scripted (default, offline) and the optional Anthropic adapter; the only provider-aware code |
 | `src/agentlab/journal.py` | Append-only SQLite events and blobs |
 | `src/agentlab/budget.py` | Limits and the cost estimate |
 | `src/agentlab/replay.py` | What replay does and does not reproduce |
@@ -70,7 +72,7 @@ check_result (deterministic checks decide success) -> run_completed | run_failed
 
 ## Security, honestly
 
-The Phase 1 permission policy and the per-run workspace are **application-level mechanisms, not a sandbox**. They control what an agent can do *through the kernel's three file tools*: it cannot read or write outside its disposable workspace copy, cannot write where the policy forbids, and has no shell, subprocess, or network tool. They would not stop code running with OS access (there is none in Phase 1), and their strength is exactly the correctness of `workspace.py`, `policy.py` and `kernel.py`. Workspace contents and tool outputs are sent to Anthropic's API. Details: `docs/SANDBOX.md`.
+The Phase 1 permission policy and the per-run workspace are **application-level mechanisms, not a sandbox**. They control what an agent can do *through the kernel's three file tools*: it cannot read or write outside its disposable workspace copy, cannot write where the policy forbids, and has no shell, subprocess, or network tool. They would not stop code running with OS access (there is none in Phase 1), and their strength is exactly the correctness of `workspace.py`, `policy.py` and `kernel.py`. Workspace contents and tool outputs are sent to whichever model backend runs the task (nothing leaves the machine with the scripted backend or a local model). Details: `docs/SANDBOX.md`.
 
 ## The idea in one paragraph
 

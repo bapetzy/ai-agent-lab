@@ -8,11 +8,11 @@ import sys
 from pathlib import Path
 
 from agentlab import config
-from agentlab.journal import Journal
+from agentlab.backends import BackendNotAvailable, make_backend, secrets_of
+from agentlab.journal import Journal, new_id
 from agentlab.kernel import Approver, approve_all, deny_all
 from agentlab.replay import replay_run
 from agentlab.run import start_run
-from agentlab.scripted import ScriptedClient, load_script
 from agentlab.task import Task
 from agentlab.trace import format_trace, summarize
 from agentlab.workspace import Workspace
@@ -38,35 +38,22 @@ def _approver(mode: str) -> Approver:
     return cli_approver if sys.stdin.isatty() else deny_all
 
 
-def _client_for(args, task: Task):
-    """Returns (client, backend, prices, secrets) or raises SystemExit with a message."""
-    if args.scripted:
+def _backend(args, task: Task):
+    """The backend for this run, or None after printing why it is not available."""
+    try:
+        backend = make_backend(task, scripted=args.scripted)
+    except BackendNotAvailable as e:
+        print(f"cannot start: {e}")
+        return None
+    if backend.name == "scripted":
+        print(f"backend   SCRIPTED fake model (offline, free; responses from {args.scripted})")
+    else:
+        lim = task.limits
         print(
-            "backend   SCRIPTED fake model (no API call, no cost; responses come from "
-            f"{args.scripted})"
+            f"backend   {backend.name.upper()} model={task.model['name']} "
+            f"max_turns={lim.max_turns} max_wall={lim.max_wall_seconds}s fallback=disabled"
         )
-        return (
-            ScriptedClient(load_script(args.scripted)),
-            "scripted",
-            {"input": 0.0, "output": 0.0},
-            [],
-        )
-    key = config.api_key()
-    if not key:
-        print(
-            "ANTHROPIC_API_KEY is not set. Put it in the environment or in .env "
-            "(see .env.example). Or run offline with --scripted FILE."
-        )
-        raise SystemExit(2)
-    import anthropic
-
-    lim = task.limits
-    print(
-        f"backend   ANTHROPIC live API (costs money). model={task.agent['model']} "
-        f"max_turns={lim.max_turns} max_cost=${lim.max_cost_usd} fallback=disabled"
-    )
-    # SDK retries are off: the kernel retries and journals every attempt itself.
-    return anthropic.Anthropic(api_key=key, max_retries=0), "anthropic", None, [key]
+    return backend
 
 
 def _finish(journal: Journal, result) -> int:
@@ -78,19 +65,12 @@ def _finish(journal: Journal, result) -> int:
 
 def cmd_run(args) -> int:
     task = Task.load(args.task)
-    try:
-        client, backend, prices, secrets = _client_for(args, task)
-    except SystemExit as e:
-        return int(e.code)
-    journal = Journal(args.db, secrets=secrets)
+    backend = _backend(args, task)
+    if backend is None:
+        return 2
+    journal = Journal(args.db, secrets=secrets_of(backend))
     result = start_run(
-        task,
-        journal,
-        client,
-        approver=_approver(args.approve),
-        runs_dir=Path(args.runs_dir),
-        model_backend=backend,
-        prices=prices,
+        task, journal, backend, approver=_approver(args.approve), runs_dir=Path(args.runs_dir)
     )
     return _finish(journal, result)
 
@@ -100,14 +80,14 @@ def cmd_rerun(args) -> int:
     journal = Journal(args.db)
     run_id = journal.find_run(args.run)
     started = journal.events(run_id)[0].payload
+    if started.get("schema_version", 1) != 2:
+        print("this run was recorded before the provider-neutral refactor and cannot be rerun")
+        return 2
     task = Task.from_dict(started["task_source"], workspace_fixture=Path("(recorded)"))
-    try:
-        client, backend, prices, secrets = _client_for(args, task)
-    except SystemExit as e:
-        return int(e.code)
-    journal = Journal(args.db, secrets=secrets)
-    from agentlab.journal import new_id
-
+    backend = _backend(args, task)
+    if backend is None:
+        return 2
+    journal = Journal(args.db, secrets=secrets_of(backend))
     ids = (new_id(), new_id(), new_id())
     ws = Workspace.from_files(
         journal.get_blob(started["fixture_blob"]), Path(args.runs_dir) / "workspaces" / ids[0]
@@ -115,11 +95,9 @@ def cmd_rerun(args) -> int:
     result = start_run(
         task,
         journal,
-        client,
+        backend,
         approver=_approver(args.approve),
         runs_dir=Path(args.runs_dir),
-        model_backend=backend,
-        prices=prices,
         ids=ids,
         workspace=ws,
         extra={"rerun_of": run_id},
@@ -129,13 +107,13 @@ def cmd_rerun(args) -> int:
 
 def cmd_runs(args) -> int:
     journal = Journal(args.db)
-    print(f"{'run':10} {'started (UTC)':20} {'task':24} {'backend':10} {'model':18} result")
+    print(f"{'run':10} {'started (UTC)':20} {'task':24} {'backend':10} {'model':20} result")
     for started in journal.runs():
         s = summarize(journal, started.run_id)
         result = s["status"] + ("" if s["success"] is None else f" success={s['success']}")
         print(
             f"{started.run_id[-8:]:10} {started.ts[:19]:20} {s['task'][:24]:24} "
-            f"{s['backend']:10} {s['model_requested'][:18]:18} {result}"
+            f"{str(s['backend'])[:10]:10} {s['model_requested'][:20]:20} {result}"
         )
     return 0
 
@@ -174,15 +152,16 @@ def cmd_replay(args) -> int:
     print(f"replay of run {run_id}")
     print(
         "mode: deterministic re-execution of the CURRENT kernel against the recorded model "
-        "responses, human decisions and starting files. The model is not called."
+        "responses, human decisions and starting files. No model or backend is called."
     )
-    print(f"result: {'MATCH' if report.matched else 'DIVERGED'}")
-    print(
-        f"  model requests rebuilt byte-identical: {report.identical_requests}/{report.model_calls}"
-    )
+    unsupported = any(d.startswith("unsupported schema_version") for d in report.differences)
+    verdict = "MATCH" if report.matched else "NOT REPLAYABLE" if unsupported else "DIVERGED"
+    print(f"result: {verdict}")
+    print(f"  model requests rebuilt identically: {report.identical_requests}/{report.model_calls}")
     print(
         f"  events compared: {report.events_compared}  "
-        f"(original ended with {report.original_status}, replay with {report.replay_status})"
+        f"(original ended with {report.original_status}, replay with "
+        f"{report.replay_status or '-'})"
     )
     for d in report.differences:
         print(f"  difference: {d}")
@@ -193,7 +172,7 @@ def cmd_replay(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="agent-lab", description="BAPE-LAB agent kernel (Phase 1)")
+    p = argparse.ArgumentParser(prog="agent-lab", description="BAPE-LAB agent kernel")
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
         "--db", default=str(DEFAULT_DB), help="journal database (default: runs/lab.db)"
@@ -204,7 +183,7 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument(
             "--scripted",
             metavar="FILE",
-            help="use a scripted fake model (offline) instead of the API",
+            help="use the scripted fake model (offline) with responses from FILE",
         )
         sp.add_argument(
             "--approve",
@@ -241,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     s.set_defaults(func=cmd_show)
 
     rp = sub.add_parser(
-        "replay", parents=[common], help="re-execute a run against its recording (no API call)"
+        "replay", parents=[common], help="re-execute a run against its recording (no model call)"
     )
     rp.add_argument("run")
     rp.set_defaults(func=cmd_replay)

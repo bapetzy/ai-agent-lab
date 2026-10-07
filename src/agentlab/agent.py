@@ -4,15 +4,16 @@
     loop:
         ask the model (sending ALL messages so far; the model remembers nothing)
         append its answer to messages
-        if it asked for tools:
-            let the kernel handle each request (policy, approval, execution, journal)
-            append all tool results as ONE user message
+        if it proposed tool calls:
+            let the kernel handle each one (policy, approval, execution, journal)
+            append all results as ONE message
             go round again
         otherwise:
             stop; its text is the final answer
 
-The model never executes anything. It only *asks*, by returning ``tool_use`` blocks.
-The budget is checked before every model call so a confused agent cannot loop forever.
+The loop speaks only the kernel's own types (model_types.py): it does not know whether
+the answer came from a scripted fake, a local model, or an external API. The model never
+executes anything; it only proposes. Budgets are checked before every model call.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from agentlab.budget import Budget
 from agentlab.gateway import ModelGateway
 from agentlab.journal import Recorder
 from agentlab.kernel import Kernel
+from agentlab.model_types import Message, ModelRequest, ToolSpec
 
 
 @dataclass(frozen=True)
@@ -30,10 +32,6 @@ class AgentOutcome:
     status: str  # "completed" (the agent stopped by itself) or "failed"
     reason: str | None
     final_text: str
-
-
-def _text_of(response: dict) -> str:
-    return "".join(b.get("text", "") for b in response["content"] if b["type"] == "text")
 
 
 def _stop(rec: Recorder, budget: Budget, why: str) -> AgentOutcome:
@@ -47,47 +45,56 @@ def run_agent(
     kernel: Kernel,
     budget: Budget,
     rec: Recorder,
-    model: str,
+    model: dict,  # the task's [model] section: name, temperature, seed, options
     system: str,
-    tools: list[dict],
+    tools: tuple[ToolSpec, ...],
     prompt: str,
-    effort: str | None = None,
 ) -> AgentOutcome:
-    messages: list[dict] = [{"role": "user", "content": prompt}]
+    messages: list[Message] = [Message("user", text=prompt)]
 
     while True:
         # 1. May we call the model again?
         if (why := budget.check_before_model_call()) is not None:
             return _stop(rec, budget, why)
 
-        # 2. Send the whole conversation; get the next assistant message.
-        request = {
-            "model": model,
-            "max_tokens": budget.limits.max_tokens_per_response,
-            "system": system,
-            "tools": tools,
-            "messages": messages,
-        }
-        if effort:
-            request["output_config"] = {"effort": effort}
-        response = gateway.call(request)
-        budget.record_model_call(response["usage"])
-        messages.append({"role": "assistant", "content": response["content"]})
+        # 2. Send the whole conversation; get the next assistant turn.
+        response = gateway.call(
+            ModelRequest(
+                model=model["name"],
+                system=system,
+                messages=tuple(messages),
+                tools=tools,
+                max_output_tokens=budget.limits.max_tokens_per_response,
+                temperature=model.get("temperature"),
+                seed=model.get("seed"),
+                options=model.get("options") or {},
+            )
+        )
+        budget.record_model_call(response.usage)
+        messages.append(
+            Message(
+                "assistant",
+                text=response.text,
+                tool_calls=response.tool_calls,
+                reasoning=response.reasoning,
+                provider_payload=response.provider_payload,
+            )
+        )
         if (why := budget.exceeded()) is not None:
             return _stop(rec, budget, why)
 
-        # 3. Tool requests: the kernel decides and executes; results go back to the model.
-        if response["stop_reason"] == "tool_use":
-            calls = [b for b in response["content"] if b["type"] == "tool_use"]
-            if (why := budget.check_before_tool_calls(len(calls))) is not None:
+        # 3. Tool calls: the kernel decides and executes; results go back to the model.
+        #    Only a response that finished *because* it asked for tools is acted on; calls in
+        #    a response cut off by the length limit may be incomplete and are never executed.
+        if response.finish_reason == "tool_calls" and response.tool_calls:
+            if (why := budget.check_before_tool_calls(len(response.tool_calls))) is not None:
                 return _stop(rec, budget, why)
-            budget.record_tool_calls(len(calls))
-            results = [kernel.handle(call) for call in calls]
-            messages.append({"role": "user", "content": results})
+            budget.record_tool_calls(len(response.tool_calls))
+            results = tuple(kernel.handle(call) for call in response.tool_calls)
+            messages.append(Message("tool_results", tool_results=results))
             continue
 
         # 4. No tool request: the agent has stopped.
-        if response["stop_reason"] == "end_turn":
-            return AgentOutcome("completed", None, _text_of(response))
-        # max_tokens, refusal, or anything unexpected: stop and say why.
-        return AgentOutcome("failed", f"stop_reason:{response['stop_reason']}", _text_of(response))
+        if response.finish_reason == "stop":
+            return AgentOutcome("completed", None, response.text)
+        return AgentOutcome("failed", f"finish_reason:{response.finish_reason}", response.text)

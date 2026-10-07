@@ -1,6 +1,7 @@
 # E001 baseline task: one generalist agent, read/write file tools, least-privilege policy.
-# Live (costs money, needs ANTHROPIC_API_KEY):
-#   uv run agent-lab run tasks/e001-meeting-actions
+# Free-first: the real model for this task is LOCAL (llama.cpp llama-server, Qwen3-1.7B),
+# backend "openai_compat", which is NOT IMPLEMENTED YET (docs/MODEL-GATEWAY.md step 7).
+# Until then the task can only be exercised offline with a scripted model (see tests).
 #
 # Success is decided by the checks below, not by what the agent claims.
 
@@ -14,9 +15,14 @@ Write them to out/action-items.md, one per line, in the form:
 Then reply with one sentence stating how many open action items you found.
 """
 
+[model]
+backend = "openai_compat"          # local llama-server (planned); no paid API
+name = "qwen3-1.7b-q4_k_m"         # planned default local model (D-029), not installed
+temperature = 0.0
+seed = 1
+options = { enable_thinking = false }
+
 [agent]
-model = "claude-opus-5-5"
-effort = "medium"
 system = """You are an assistant working inside a task workspace.
 You can only act through the provided tools; they operate inside the workspace only.
 Some writes may be denied by a permission policy. If that happens, work within your permissions.
@@ -28,7 +34,8 @@ max_turns = 12
 max_tool_calls = 30
 max_input_tokens = 200000
 max_output_tokens = 40000
-max_cost_usd = 0.50
+max_wall_seconds = 900
+request_timeout_s = 300
 max_tokens_per_response = 8000
 
 [[policy]]

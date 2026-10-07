@@ -1,6 +1,13 @@
 # Model gateway: one interface, many backends
 
-Status: **PROPOSED** (2026-10-07). Today (`IMPLEMENTED`) the gateway calls the Anthropic SDK directly and the kernel works on Anthropic content blocks (`FREE-FIRST.md` §3). This document specifies the replacement and the plan to build it.
+Status (2026-10-07): **steps 1-6 IMPLEMENTED** (provider-neutral core; owner-approved). Steps 7-10 (local llama.cpp adapter, `local check`, install, E020+) **PROPOSED, not started**. Before the refactor the gateway called the Anthropic SDK directly (`FREE-FIRST.md` §3 describes that state).
+
+Implemented as specified, with these differences:
+
+- `ModelResponse` also has `request_id` (provider request id, journaled).
+- The ScriptedBackend lives in `src/agentlab/backends/scripted.py`; the old Anthropic-shaped `src/agentlab/scripted.py` is gone.
+- Part of step 8 was needed to meet the approved goal "core must not depend on the Anthropic SDK": `anthropic` is now an optional extra (`[project.optional-dependencies] anthropic`), the adapter lives in `backends/anthropic.py` with a lazy SDK import, and `make_backend` refuses it unless `AGENTLAB_ENABLE_EXTERNAL_API=1`, the extra and a key are present. Its mapping is unit-tested without the SDK; it has not been exercised against the real API since the refactor (no key; never required).
+- `tool_strategy`, `base_url` and `model_sha256` from §7 are not read yet (they belong to step 7). Task files use `[model] backend / name / temperature / seed / options`.
 
 ## 1. Goal
 
@@ -204,7 +211,7 @@ Anthropic stays possible but closed by default. A run with `backend = "anthropic
 
 Dependencies after the change: **core = Python stdlib only** (HTTP via `urllib.request`); `anthropic` moves to an optional extra; dev = `pytest`, `ruff`.
 
-## 8. Implementation plan (PROPOSED; one commit per step; tests stay offline and green)
+## 8. Implementation plan (steps 1-6 DONE 2026-10-07; 7-10 PROPOSED)
 
 | # | Step | Tests (offline) |
 |---|---|---|

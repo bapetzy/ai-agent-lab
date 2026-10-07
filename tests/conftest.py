@@ -51,8 +51,8 @@ def task(fixture_dir):
     return Task.from_dict(
         {
             "task": {"name": "test-task", "prompt": "Summarize notes/todo.md into out/summary.md"},
+            "model": {"backend": "scripted", "name": "scripted-fake"},
             "agent": {
-                "model": "scripted-fake",
                 "system": "You are a careful assistant.",
                 "tools": ["list_files", "read_file", "write_file"],
             },
